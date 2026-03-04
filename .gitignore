@@ -25,3 +25,7 @@ runs/
 
 # If you have small JSON configs you want to keep later,
 # we can whitelist them explicitly.
+
+# React / Node
+numerical-ui/node_modules/
+numerical-ui/build/
