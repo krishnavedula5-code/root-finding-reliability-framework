@@ -26,10 +26,13 @@ os.makedirs(RUNS_DIR, exist_ok=True)
 
 APP_VERSION = os.environ.get("NUM_LAB_APP_VERSION", "dev")
 
-allowed_origins = os.environ.get(
+# Comma-separated list of allowed origins.
+# Example (Render): NUM_LAB_CORS_ORIGINS=https://your-ui.vercel.app,http://localhost:3000
+allowed_origins_env = os.environ.get(
     "NUM_LAB_CORS_ORIGINS",
-    "http://localhost:3000"
-).split(",")
+    "http://localhost:3000,https://numerical-ui-deploy-krishnavedula5-codes-projects.vercel.app",
+)
+allowed_origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
 
 
 # ---------------------------------------------------------
@@ -176,6 +179,16 @@ def list_runs(limit: int = 20) -> list[dict]:
 
 app = FastAPI()
 
+# ✅ Enable CORS in BOTH dev and production.
+# If you want to restrict, set NUM_LAB_CORS_ORIGINS on Render to your exact Vercel URL.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/health", response_model=None)
 def health():
     return {"ok": True, "app_version": APP_VERSION}
@@ -189,31 +202,8 @@ def __whoami():
         "python": sys.executable,
         "runs_dir": RUNS_DIR,
         "app_version": APP_VERSION,
+        "cors_origins": allowed_origins,
     }
-
-
-
-
-# Vercel frontend origins (add your exact URLs)
-DEFAULT_ORIGINS = [
-    "http://localhost:3000",
-    "https://numerical-ui-deploy-krishnavedula5-codes-projects.vercel.app",
-]
-
-# Allow overriding via env var on Render:
-# CORS_ORIGINS="https://your-ui.vercel.app,https://your-custom-domain.com"
-cors_env = os.getenv("CORS_ORIGINS", "")
-extra = [o.strip() for o in cors_env.split(",") if o.strip()]
-
-allow_origins = list(dict.fromkeys(DEFAULT_ORIGINS + extra))  # dedupe
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allow_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 # ---------------------------------------------------------
@@ -340,9 +330,10 @@ def get_recent_runs(limit: int = Query(20, ge=1, le=200)):
 # Serve React build (single-tunnel demo)
 # ---------------------------------------------------------
 
+# ✅ Cross-platform default path (works on Render/Linux and locally if build exists in repo)
 FRONTEND_BUILD_DIR = os.environ.get(
     "NUM_LAB_FRONTEND_BUILD",
-    r"C:\Users\yella.YELL-1\numerical-ui\build"
+    os.path.join(os.getcwd(), "numerical-ui", "build")
 )
 
 if os.path.isdir(FRONTEND_BUILD_DIR):
@@ -367,4 +358,5 @@ else:
             "ok": True,
             "message": "React build not found. Run `npm run build` in numerical-ui.",
             "docs": "/docs",
+            "frontend_build_dir": FRONTEND_BUILD_DIR,
         }
