@@ -12,20 +12,20 @@ class HybridBisectionNewtonSolver(RootSolver):
     """
     Hybrid solver (Bisection safety + Newton acceleration).
 
-    Two modes:
-    1) BRACKET MODE (fa*fb < 0): maintains sign-change bracket (guaranteed for simple roots)
-    2) WINDOW MODE  (fa*fb > 0): treats [a,b] as a "window" (no sign guarantee),
-       still attempts Newton from midpoint and shrinks the window bisection-style.
-       Useful for even-multiplicity roots like (x-1)^2.
+    This implementation uses true BRACKET mode only:
+    - requires initial sign change f(a) * f(b) < 0
+    - maintains sign-change bracket
+    - attempts Newton from midpoint when safe
+    - falls back to bisection otherwise
 
     Records full trace and emits events for teaching/debug.
 
-    Key robustness features in this implementation:
+    Key robustness features:
     - Safe derivative evaluation (analytic or numerical)
     - Newton accept rule (residual improvement vs midpoint)
     - If Newton "accepts" but doesn't move due to float precision / clamping,
-      we fallback to midpoint bisection for that iteration (prevents false stagnation)
-    - Stagnation termination only when bisection cannot move anymore (precision limit)
+      fallback to midpoint bisection for that iteration
+    - Stagnation termination only when bisection cannot move anymore
     """
 
     def __init__(
@@ -53,7 +53,7 @@ class HybridBisectionNewtonSolver(RootSolver):
         self.stagnation_tol = float(stagnation_tol)
         self.newton_accept_c = float(newton_accept_c)
 
-        # Split tolerances (UI still supplies one tol)
+        # Split tolerances
         self.tol_f = float(tol)
         self.tol_bracket = float(tol)
         self.tol_x = float(tol_x) if tol_x is not None else float(tol)
@@ -72,7 +72,6 @@ class HybridBisectionNewtonSolver(RootSolver):
             else:
                 val = float(self.df(x))
 
-            # count df-evals if base provides counter
             if hasattr(self, "n_df"):
                 self.n_df += 1  # type: ignore[attr-defined]
 
@@ -88,7 +87,7 @@ class HybridBisectionNewtonSolver(RootSolver):
     def solve(self) -> SolverResult:
         a, b = self.a, self.b
         if b < a:
-            a, b = b, a  # normalize
+            a, b = b, a
 
         fa = self._safe_eval(a)
         fb = self._safe_eval(b)
@@ -96,7 +95,6 @@ class HybridBisectionNewtonSolver(RootSolver):
         if fa is None or fb is None:
             self._event(
                 "nonfinite",
-                k=0,
                 code="NONFINITE",
                 level="error",
                 a=a,
@@ -162,31 +160,44 @@ class HybridBisectionNewtonSolver(RootSolver):
                 n_df=getattr(self, "n_df", 0),
             )
 
-        # Determine mode
+        # Require a true bracket
         bracket_mode = (fa * fb) < 0.0
         if not bracket_mode:
             self._event(
                 "invalid_bracket",
-                k=0,
                 code="BAD_BRACKET",
-                level="warn",
+                level="error",
                 a=a,
                 b=b,
                 fa=fa,
                 fb=fb,
-                note="No sign change; switching to WINDOW mode.",
+                note="Initial interval does not bracket a root.",
+            )
+            return SolverResult(
+                method="hybrid",
+                root=None,
+                status="bad_bracket",
+                stop_reason="BAD_BRACKET",
+                message="Initial interval does not bracket a root.",
+                iterations=0,
+                records=[],
+                events=self.events,
+                best_x=None,
+                best_fx=None,
+                tol=self.tol_f,
+                n_f=self.n_f,
+                n_df=getattr(self, "n_df", 0),
             )
 
         self._event(
             "init_interval",
-            k=0,
-            code="INIT_BRACKET" if bracket_mode else "INIT_WINDOW",
+            code="INIT_BRACKET",
             level="info",
             a=a,
             b=b,
             fa=fa,
             fb=fb,
-            mode="BRACKET" if bracket_mode else "WINDOW",
+            mode="BRACKET",
             tol_f=self.tol_f,
             tol_x=self.tol_x,
             tol_bracket=self.tol_bracket,
@@ -239,7 +250,7 @@ class HybridBisectionNewtonSolver(RootSolver):
                 m=m,
                 fm=fm,
                 interval_err=interval_err,
-                mode="BRACKET" if bracket_mode else "WINDOW",
+                mode="BRACKET",
             )
 
             # default candidate: bisection step
@@ -270,7 +281,6 @@ class HybridBisectionNewtonSolver(RootSolver):
                 self._event("newton_attempt", k=k, code="NEWTON_ATTEMPT", level="info", m=m, fm=fm, dfm=dfm)
                 x_newton = m - fm / dfm
 
-                # allow slight floating-point overshoot
                 eps = 10.0 * abs(b - a) * 1e-15 + 1e-15
 
                 if x_newton < a - eps or x_newton > b + eps:
@@ -287,7 +297,6 @@ class HybridBisectionNewtonSolver(RootSolver):
                         eps=eps,
                     )
                 else:
-                    # clamp into [a, b] if it is only slightly outside
                     if x_newton < a:
                         x_newton = a
                     if x_newton > b:
@@ -333,10 +342,9 @@ class HybridBisectionNewtonSolver(RootSolver):
                                 threshold=thresh,
                             )
 
-            # compute step size
             dx = None if x_prev is None else abs(x_candidate - x_prev)
 
-            # If Newton accepted but didn't move (precision/clamping), fallback to bisection for this iteration
+            # If Newton accepted but didn't move, fallback to bisection
             if step_type == "newton" and x_prev is not None and dx is not None:
                 min_move = max(self.stagnation_tol, 10.0 * math.ulp(x_candidate))
                 if dx < min_move:
@@ -357,7 +365,7 @@ class HybridBisectionNewtonSolver(RootSolver):
                     f_candidate = fm
                     dx = abs(x_candidate - x_prev)
 
-            # Precision limit check: if midpoint collapses to endpoint, bisection cannot shrink further
+            # Precision limit check
             if m == a or m == b:
                 self._event(
                     "precision_limit",
@@ -384,7 +392,7 @@ class HybridBisectionNewtonSolver(RootSolver):
                     dfm=dfm,
                     x_newton=x_newton,
                     fx_newton=fx_newton,
-                    meta={"mode": "BRACKET" if bracket_mode else "WINDOW"},
+                    meta={"mode": "BRACKET"},
                 )
                 upd_best(x_candidate, f_candidate)
                 self._event("termination", k=k, code="PRECISION_LIMIT", level="warn", reason="float_midpoint_collapse")
@@ -404,8 +412,6 @@ class HybridBisectionNewtonSolver(RootSolver):
                     n_df=getattr(self, "n_df", 0),
                 )
 
-            # Stagnation termination only if we truly cannot move AND residual is not met.
-            # (After the Newton-no-move fallback, normal bisection should keep moving.)
             if dx is not None:
                 min_move = max(self.stagnation_tol, 10.0 * math.ulp(x_candidate))
                 if dx < min_move and abs(f_candidate) > self.tol_f:
@@ -434,7 +440,7 @@ class HybridBisectionNewtonSolver(RootSolver):
                         dfm=dfm,
                         x_newton=x_newton,
                         fx_newton=fx_newton,
-                        meta={"mode": "BRACKET" if bracket_mode else "WINDOW"},
+                        meta={"mode": "BRACKET"},
                     )
                     upd_best(x_candidate, f_candidate)
                     self._event("termination", k=k, code="STAGNATION", level="warn", reason="dx_small")
@@ -471,7 +477,7 @@ class HybridBisectionNewtonSolver(RootSolver):
                 x_newton=x_newton,
                 fx_newton=fx_newton,
                 meta={
-                    "mode": "BRACKET" if bracket_mode else "WINDOW",
+                    "mode": "BRACKET",
                     **({"newton_reject_reason": reject_reason} if (step_type == "bisection" and reject_reason) else {}),
                 },
             )
@@ -505,9 +511,6 @@ class HybridBisectionNewtonSolver(RootSolver):
                     n_df=getattr(self, "n_df", 0),
                 )
 
-            # -------------------------
-            # FIX 1: step tolerance is not convergence unless near root
-            # -------------------------
             if dx is not None and dx <= self.tol_x:
                 abs_fc = abs(f_candidate)
                 if abs_fc <= 10.0 * self.tol_f:
@@ -550,80 +553,40 @@ class HybridBisectionNewtonSolver(RootSolver):
                         note="Step size small but residual is not; continuing (prevents false convergence).",
                     )
 
-            # -------------------------
-            # FIX 2: interval tolerance only implies convergence in BRACKET mode
-            # -------------------------
             if interval_err <= self.tol_bracket:
-                if bracket_mode:
-                    self._event(
-                        "termination",
-                        k=k,
-                        code="TOL_BRACKET",
-                        level="info",
-                        reason="interval",
-                        interval_err=interval_err,
-                        tol_bracket=self.tol_bracket,
-                    )
-                    return SolverResult(
-                        method="hybrid",
-                        root=x_candidate,
-                        status="converged",
-                        stop_reason="TOL_BRACKET",
-                        message="Converged by interval tolerance (bracket mode).",
-                        iterations=k,
-                        records=self.records,
-                        events=self.events,
-                        best_x=best_x,
-                        best_fx=best_fx,
-                        tol=self.tol_f,
-                        n_f=self.n_f,
-                        n_df=getattr(self, "n_df", 0),
-                    )
-                else:
-                    self._event(
-                        "termination",
-                        k=k,
-                        code="WINDOW_SHRUNK",
-                        level="warn",
-                        reason="interval_window",
-                        interval_err=interval_err,
-                        tol_bracket=self.tol_bracket,
-                        note="Window shrunk below tol, but no sign-change guarantee; not declaring convergence.",
-                    )
-                    return SolverResult(
-                        method="hybrid",
-                        root=x_candidate,
-                        status="stagnation",
-                        stop_reason="WINDOW_SHRUNK",
-                        message="Window shrunk below tolerance (window mode); residual tolerance not met.",
-                        iterations=k,
-                        records=self.records,
-                        events=self.events,
-                        best_x=best_x,
-                        best_fx=best_fx,
-                        tol=self.tol_f,
-                        n_f=self.n_f,
-                        n_df=getattr(self, "n_df", 0),
-                    )
+                self._event(
+                    "termination",
+                    k=k,
+                    code="TOL_BRACKET",
+                    level="info",
+                    reason="interval",
+                    interval_err=interval_err,
+                    tol_bracket=self.tol_bracket,
+                )
+                return SolverResult(
+                    method="hybrid",
+                    root=x_candidate,
+                    status="converged",
+                    stop_reason="TOL_BRACKET",
+                    message="Converged by interval tolerance (bracket mode).",
+                    iterations=k,
+                    records=self.records,
+                    events=self.events,
+                    best_x=best_x,
+                    best_fx=best_fx,
+                    tol=self.tol_f,
+                    n_f=self.n_f,
+                    n_df=getattr(self, "n_df", 0),
+                )
 
-            # interval update
-            if bracket_mode:
-                # maintain sign-change bracket using candidate
-                if fa * f_candidate < 0:
-                    b, fb = x_candidate, f_candidate
-                else:
-                    a, fa = x_candidate, f_candidate
-                self._event("bracket_update", k=k, code="BRACKET_UPDATE", level="info", a=a, b=b, fa=fa, fb=fb)
+            # bracket update
+            if fa * f_candidate < 0:
+                b, fb = x_candidate, f_candidate
             else:
-                # WINDOW MODE: shrink around the midpoint side (domain-window bisection)
-                # Use midpoint info to shrink, independent of sign.
-                if x_candidate <= m:
-                    b, fb = m, fm
-                else:
-                    a, fa = m, fm
-                self._event("window_update", k=k, code="WINDOW_UPDATE", level="info", a=a, b=b, fa=fa, fb=fb)
+                a, fa = x_candidate, f_candidate
 
-        # max iterations
+            self._event("bracket_update", k=k, code="BRACKET_UPDATE", level="info", a=a, b=b, fa=fa, fb=fb)
+
         last_x = self.records[-1].x if self.records else None
         last_fx = self.records[-1].fx if self.records else None
         if best_x is None:

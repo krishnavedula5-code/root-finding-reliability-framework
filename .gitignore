@@ -34,3 +34,19 @@ runs/
 # React / Node
 numerical-ui/node_modules/
 numerical-ui/build/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# virtual environments
+.venv/
+venv/
+
+# experiment outputs
+data/
+sweeps_out/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from typing import Optional, Any
 from pydantic import BaseModel, model_validator
 from fastapi.middleware.cors import CORSMiddleware
+from numerical_lab.benchmarks.catalog import list_benchmarks, get_benchmark
 
 from numerical_lab.engine.controller import NumericalEngine
 from numerical_lab.engine.summary import build_comparison_summary
@@ -224,7 +225,7 @@ def compute_compare_payload(req: CompareRequest) -> dict[str, Any]:
     elif req.dexpr and req.dexpr.strip():
         df = compile_expr(req.dexpr)
 
-    # 🔥 Safe defaults for secant
+    # Safe defaults for secant
     sec_x0, sec_x1 = _default_secant_guesses(req.a, req.b, req.x0, req.x1)
 
     comp = NumericalEngine.compare_methods(
@@ -325,7 +326,16 @@ def get_run(run_id: str):
 def get_recent_runs(limit: int = Query(20, ge=1, le=200)):
     return {"runs": list_runs(limit)}
 
+@app.get("/benchmarks", response_model=None)
+def benchmarks():
+    return {"benchmarks": list_benchmarks()}
 
+@app.get("/benchmarks/{bench_id}", response_model=None)
+def benchmark_by_id(bench_id: str):
+    obj = get_benchmark(bench_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail=f"Benchmark not found: {bench_id}")
+    return obj
 # ---------------------------------------------------------
 # Serve React build (single-tunnel demo)
 # ---------------------------------------------------------

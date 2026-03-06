@@ -50,6 +50,7 @@ class NewtonSolver(RootSolver):
             if self.df is None:
                 return float("nan")
             val = float(self.df(x))
+            self.n_df += 1  # ✅ count analytic derivative evaluation
             if not math.isfinite(val):
                 return float("nan")
             return val
@@ -64,6 +65,7 @@ class NewtonSolver(RootSolver):
         h = 1e-6 * max(1.0, abs(x))
         fxph = self._safe_eval(x + h)
         fxmh = self._safe_eval(x - h)
+        self.n_df += 1  # ✅ count one numerical derivative evaluation
         if fxph is None or fxmh is None:
             return (float("nan"), h, float("nan"), float("nan"))
         return ((fxph - fxmh) / (2.0 * h), h, fxph, fxmh)
@@ -133,7 +135,6 @@ class NewtonSolver(RootSolver):
                     fm=fm,
                     dfx=dfx,
                 )
-                # Count df eval as 2 f-evals; your base may already count _safe_eval
             else:
                 dfx = self._safe_eval_df(x)
 
