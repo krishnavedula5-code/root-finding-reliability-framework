@@ -14,6 +14,7 @@ from numerical_lab.methods.hybrid import HybridBisectionNewtonSolver
 from numerical_lab.methods.newton import NewtonSolver
 from numerical_lab.methods.safeguarded_newton import SafeguardedNewtonSolver
 from numerical_lab.methods.secant import SecantSolver
+from numerical_lab.experiments.discover_roots import RootCluster, discover_roots
 
 
 # -----------------------------
@@ -52,6 +53,7 @@ class SweepRunRecord:
     stop_reason: Optional[str] = None
     iterations: Optional[int] = None
     root: Optional[float] = None
+    root_id: Optional[int] = None
     abs_f_final: Optional[float] = None
 
     convergence_label: Optional[str] = None
@@ -216,6 +218,31 @@ def maybe_match_known_root(
             return float(r)
     return None
 
+def assign_root_id(
+    root: Optional[float],
+    clusters: Optional[List[RootCluster]],
+    tol: float = 1e-4,
+) -> Optional[int]:
+    if root is None or not clusters:
+        return None
+
+    best_cluster = None
+    best_dist = None
+
+    for c in clusters:
+        d = abs(root - c.center)
+        if best_dist is None or d < best_dist:
+            best_dist = d
+            best_cluster = c
+
+    if best_cluster is None:
+        return None
+
+    if best_dist is not None and best_dist <= tol:
+        return int(best_cluster.root_id)
+
+    return None
+
 
 def create_sweep_folder(base: str | Path = "outputs/sweeps") -> Tuple[str, Path]:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -356,10 +383,12 @@ def result_to_record(
     a: Optional[float] = None,
     b: Optional[float] = None,
     error_message: Optional[str] = None,
+    clusters: Optional[List[RootCluster]] = None,
 ) -> SweepRunRecord:
     events = extract_events(result) if result is not None else []
     flags = event_flags(events)
-
+    root_value = extract_root(result) if result is not None else None
+    assigned_root_id = assign_root_id(root_value, clusters)
     return SweepRunRecord(
         problem_id=problem.problem_id,
         method=method,
@@ -371,7 +400,8 @@ def result_to_record(
         status=extract_status(result) if result is not None else "error",
         stop_reason=extract_stop_reason(result) if result is not None else None,
         iterations=extract_iterations(result) if result is not None else None,
-        root=extract_root(result) if result is not None else None,
+        root=root_value,
+        root_id=assigned_root_id,
         abs_f_final=extract_abs_f_final(result) if result is not None else None,
         convergence_label=extract_label(result, "convergence_class")
         if result is not None
@@ -405,7 +435,20 @@ def run_problem_sweeps(
 ) -> List[SweepRunRecord]:
     f = compile_expr(problem.expr)
     df = compile_expr(problem.dexpr) if problem.dexpr else None
+    discovered_clusters: Optional[List[RootCluster]] = None
 
+    if problem.dexpr is not None:
+        discovered_clusters = discover_roots(
+            expr=problem.expr,
+            dexpr=problem.dexpr,
+            xmin=problem.scalar_range[0],
+            xmax=problem.scalar_range[1],
+            n=scalar_points,
+            tol=tol,
+            max_iter=max_iter,
+            cluster_tol=1e-4,
+            residual_tol=1e-8,
+        )
     records: List[SweepRunRecord] = []
 
     # Newton scalar starts
@@ -416,9 +459,18 @@ def run_problem_sweeps(
         if df is not None:
             try:
                 res = run_newton(f, df, x0=x0, tol=tol, max_iter=max_iter)
-                records.append(result_to_record(problem, "newton", i, res, x0=x0))
-            except Exception as exc:
                 records.append(
+                    result_to_record(
+                        problem,
+                        "newton",
+                        i,
+                        res,
+                        x0=x0,
+                        clusters=discovered_clusters,
+                    )
+                )
+            except Exception as exc:
+                 records.append(
                     result_to_record(
                         problem,
                         "newton",
@@ -426,6 +478,7 @@ def run_problem_sweeps(
                         None,
                         x0=x0,
                         error_message=str(exc),
+                        clusters=discovered_clusters,
                     )
                 )
 
@@ -437,7 +490,17 @@ def run_problem_sweeps(
         x0, x1 = secant_grid[i], secant_grid[i + 1]
         try:
             res = run_secant(f, x0=x0, x1=x1, tol=tol, max_iter=max_iter)
-            records.append(result_to_record(problem, "secant", i, res, x0=x0, x1=x1))
+            records.append(
+                result_to_record(
+                    problem,
+                    "secant",
+                    i,
+                    res,
+                    x0=x0,
+                    x1=x1,
+                    clusters=discovered_clusters,
+                )
+            )    
         except Exception as exc:
             records.append(
                 result_to_record(
@@ -448,6 +511,7 @@ def run_problem_sweeps(
                     x0=x0,
                     x1=x1,
                     error_message=str(exc),
+                    clusters=discovered_clusters,
                 )
             )
 
@@ -464,7 +528,17 @@ def run_problem_sweeps(
     for i, (a, b) in enumerate(brackets):
         try:
             res = run_bisection(f, a=a, b=b, tol=tol, max_iter=max_iter)
-            records.append(result_to_record(problem, "bisection", i, res, a=a, b=b))
+            records.append(
+                result_to_record(
+                    problem,
+                    "bisection",
+                    i,
+                    res,
+                    a=a,
+                    b=b,
+                    clusters=discovered_clusters,
+                )
+            )
         except Exception as exc:
             records.append(
                 result_to_record(
@@ -475,6 +549,7 @@ def run_problem_sweeps(
                     a=a,
                     b=b,
                     error_message=str(exc),
+                    clusters=discovered_clusters,
                 )
             )
 
@@ -484,8 +559,17 @@ def run_problem_sweeps(
             try:
                 res = run_hybrid(f, df, a=a, b=b, tol=tol, max_iter=max_iter)
                 records.append(
-                    result_to_record(problem, "hybrid", i, res, x0=x0_mid, a=a, b=b)
-                )
+                    result_to_record(
+                        problem,
+                        "hybrid",
+                        i,
+                        res,
+                        x0=x0_mid,
+                        a=a,
+                        b=b,
+                        clusters=discovered_clusters,
+                    )
+                )           
             except Exception as exc:
                 records.append(
                     result_to_record(
@@ -497,6 +581,7 @@ def run_problem_sweeps(
                         a=a,
                         b=b,
                         error_message=str(exc),
+                        clusters=discovered_clusters,
                     )
                 )
 
@@ -513,6 +598,7 @@ def run_problem_sweeps(
                         x0=x0_mid,
                         a=a,
                         b=b,
+                        clusters=discovered_clusters,
                     )
                 )
             except Exception as exc:
@@ -526,6 +612,7 @@ def run_problem_sweeps(
                         a=a,
                         b=b,
                         error_message=str(exc),
+                        clusters=discovered_clusters,
                     )
                 )
 
