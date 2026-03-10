@@ -6,7 +6,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Any, List, Dict
-
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -255,8 +255,11 @@ def list_runs(limit=20):
 
 app = FastAPI()
 
-app.mount("/outputs", StaticFiles(directory="outputs"), name="outputs")
 
+
+OUTPUTS_DIR = Path("outputs")
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
