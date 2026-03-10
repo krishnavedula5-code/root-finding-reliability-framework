@@ -1,52 +1,50 @@
-# Python virtual environment
+# -------------------------
+# Python
+# -------------------------
+
+# Virtual environments
 .venv/
+venv/
 
 # Python cache
 __pycache__/
 *.pyc
-
-# Node modules
-node_modules/
-
-# Build folders
-build/
-dist/
-
-# Generated experiment outputs (large files)
-outputs/
-data/
-runs/
 
 # Logs
 *.log
 
-# Large JSON artifacts anywhere
-# Ignore large JSON artifacts
-**/*.json
+# Environment variables
+.env
 
-# ✅ Allow React project metadata JSON
-!numerical-ui/package.json
-!numerical-ui/package-lock.json
 
-# If you have small JSON configs you want to keep later,
-# we can whitelist them explicitly.
+# -------------------------
+# Node / React
+# -------------------------
 
-# React / Node
+node_modules/
 numerical-ui/node_modules/
+
+# Build artifacts
+build/
+dist/
 numerical-ui/build/
 
-# Python cache
-__pycache__/
-*.pyc
 
-# virtual environments
-.venv/
-venv/
+# -------------------------
+# Experiment outputs
+# -------------------------
 
-# experiment outputs
+outputs/
+runs/
+runs_store/
 data/
 sweeps_out/
 
-# OS
+
+# -------------------------
+# OS junk
+# -------------------------
+
 .DS_Store
 Thumbs.db
+.vscode/

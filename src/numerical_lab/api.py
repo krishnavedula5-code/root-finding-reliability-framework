@@ -1,22 +1,31 @@
-from fastapi import FastAPI, HTTPException, Query
-from typing import Optional, Any, List
-from pydantic import BaseModel,Field,  model_validator
-from fastapi.middleware.cors import CORSMiddleware
-from numerical_lab.benchmarks.catalog import list_benchmarks, get_benchmark
-from numerical_lab.services.experiment_jobs import create_job, get_job, list_jobs
-from numerical_lab.services.experiments_service import start_sweep_job
-from numerical_lab.engine.controller import NumericalEngine
-from numerical_lab.engine.summary import build_comparison_summary
-from numerical_lab.diagnostics.explain import explain_run
+from __future__ import annotations
 
+import os
+import sys
+import json
+import uuid
+from datetime import datetime, timezone
+from typing import Optional, Any, List, Dict
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-import json
-import os
-import sys
-import uuid
-from datetime import datetime, timezone
+from pydantic import BaseModel, Field, model_validator
+
+from numerical_lab.engine.controller import NumericalEngine
+from numerical_lab.engine.summary import build_comparison_summary
+from numerical_lab.diagnostics.explain import explain_run
+from numerical_lab.benchmarks.catalog import list_benchmarks, get_benchmark
+
+from numerical_lab.services.experiment_jobs import (
+    create_job,
+    get_job,
+    list_jobs,
+)
+
+from numerical_lab.services.experiments_service import start_sweep_job
 
 
 # ---------------------------------------------------------
@@ -28,17 +37,16 @@ os.makedirs(RUNS_DIR, exist_ok=True)
 
 APP_VERSION = os.environ.get("NUM_LAB_APP_VERSION", "dev")
 
-# Comma-separated list of allowed origins.
-# Example (Render): NUM_LAB_CORS_ORIGINS=https://your-ui.vercel.app,http://localhost:3000
 allowed_origins_env = os.environ.get(
     "NUM_LAB_CORS_ORIGINS",
     "http://localhost:3000,https://numerical-ui-deploy-krishnavedula5-codes-projects.vercel.app",
 )
+
 allowed_origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
 
 
 # ---------------------------------------------------------
-# Request Model
+# Request Models
 # ---------------------------------------------------------
 
 class CompareRequest(BaseModel):
@@ -56,8 +64,10 @@ class CompareRequest(BaseModel):
     def _validate_derivative(self):
         if self.numerical_derivative:
             return self
+
         if self.dexpr is None or str(self.dexpr).strip() == "":
             raise ValueError("dexpr is required unless numerical_derivative=true")
+
         return self
 
 
@@ -65,29 +75,89 @@ class CreateRunResponse(BaseModel):
     run_id: str
     url_path: str
 
+
+class RangeSpec(BaseModel):
+    x_min: float
+    x_max: float
+    n_points: Optional[int] = None
+
+
 class SweepExperimentRequest(BaseModel):
+    problem_mode: str = "benchmark"
     problem_id: Optional[str] = None
-    methods: List[str] = Field(default_factory=lambda: ["newton"])
+
+    expr: Optional[str] = None
+    dexpr: Optional[str] = None
+
+    methods: List[str] = Field(
+        default_factory=lambda: [
+            "newton",
+            "secant",
+            "bisection",
+            "hybrid",
+            "safeguarded_newton",
+        ]
+    )
+
     x_min: Optional[float] = None
     x_max: Optional[float] = None
-    n_points: Optional[int] = 100
+    n_points: int = 100
+    tol: float = 1e-10
+    max_iter: int = 100
     boundary_method: str = "newton"
+
+    scalar_range: Optional[RangeSpec] = None
+    secant_range: Optional[RangeSpec] = None
+    bracket_search_range: Optional[RangeSpec] = None
+
+    @model_validator(mode="after")
+    def _validate_request(self):
+
+        mode = str(self.problem_mode or "benchmark").lower().strip()
+
+        if mode not in {"benchmark", "custom"}:
+            raise ValueError("problem_mode must be benchmark or custom")
+
+        if self.n_points < 2:
+            raise ValueError("n_points must be >= 2")
+
+        if self.tol <= 0:
+            raise ValueError("tol must be positive")
+
+        if self.max_iter < 1:
+            raise ValueError("max_iter must be >= 1")
+
+        if not self.methods:
+            raise ValueError("At least one method must be selected")
+
+        if mode == "benchmark":
+            if not self.problem_id:
+                self.problem_id = "p4"
+            return self
+
+        if not self.expr:
+            raise ValueError("expr required for custom mode")
+
+        if self.scalar_range is None:
+            if self.x_min is None or self.x_max is None:
+                raise ValueError("custom mode requires x_min/x_max or scalar_range")
+
+            if float(self.x_min) >= float(self.x_max):
+                raise ValueError("x_min must be < x_max")
+
+        return self
 
 
 # ---------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------
 
-def _default_secant_guesses(a: float, b: float, x0: Optional[float], x1: Optional[float]):
-    """
-    Ensures secant receives valid numeric and distinct guesses.
-    """
+def _default_secant_guesses(a, b, x0, x1):
+
     mid = 0.5 * (a + b)
 
-    # Default x0 to midpoint
     xx0 = mid if x0 is None else float(x0)
 
-    # Default x1 to bracket endpoint if not provided
     if x1 is None:
         candidate = float(b)
         if candidate == xx0:
@@ -98,20 +168,17 @@ def _default_secant_guesses(a: float, b: float, x0: Optional[float], x1: Optiona
     else:
         xx1 = float(x1)
 
-    # Ensure distinct guesses
     if xx1 == xx0:
         xx1 = xx0 + 1e-4
 
     return xx0, xx1
 
 
-def _run_path(run_id: str) -> str:
+def _run_path(run_id: str):
     return os.path.join(RUNS_DIR, f"{run_id}.json")
 
 
-def save_run(payload: dict) -> str:
-    if "request" not in payload:
-        raise RuntimeError("Refusing to save run: 'request' missing from payload")
+def save_run(payload: dict):
 
     run_id = uuid.uuid4().hex[:12]
 
@@ -123,29 +190,23 @@ def save_run(payload: dict) -> str:
     }
 
     ordered = {"_meta": meta}
+
     for k, v in payload.items():
-        if k == "_meta":
-            continue
-        ordered[k] = v
+        if k != "_meta":
+            ordered[k] = v
 
-    tmp_path = _run_path(run_id) + ".tmp"
-    final_path = _run_path(run_id)
+    path = _run_path(run_id)
 
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(
-            ordered,
-            f,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=False,
-        )
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(ordered, f, indent=2)
 
-    os.replace(tmp_path, final_path)
     return run_id
 
 
-def load_run(run_id: str) -> dict:
+def load_run(run_id: str):
+
     path = _run_path(run_id)
+
     if not os.path.exists(path):
         raise FileNotFoundError(run_id)
 
@@ -153,16 +214,19 @@ def load_run(run_id: str) -> dict:
         return json.load(f)
 
 
-def list_runs(limit: int = 20) -> list[dict]:
-    items: list[dict] = []
+def list_runs(limit=20):
+
+    items = []
 
     for name in os.listdir(RUNS_DIR):
+
         if not name.endswith(".json"):
             continue
 
         path = os.path.join(RUNS_DIR, name)
 
         try:
+
             with open(path, "r", encoding="utf-8") as f:
                 obj = json.load(f)
 
@@ -171,16 +235,18 @@ def list_runs(limit: int = 20) -> list[dict]:
 
             items.append(
                 {
-                    "run_id": meta.get("run_id") or name[:-5],
+                    "run_id": meta.get("run_id"),
                     "created_at": meta.get("created_at"),
                     "expr": req.get("expr"),
                 }
             )
+
         except Exception:
             continue
 
     items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
-    return items[: max(1, min(limit, 200))]
+
+    return items[:limit]
 
 
 # ---------------------------------------------------------
@@ -191,8 +257,6 @@ app = FastAPI()
 
 app.mount("/outputs", StaticFiles(directory="outputs"), name="outputs")
 
-# ✅ Enable CORS in BOTH dev and production.
-# If you want to restrict, set NUM_LAB_CORS_ORIGINS on Render to your exact Vercel URL.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -201,31 +265,96 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/health", response_model=None)
+
+# ---------------------------------------------------------
+# Health
+# ---------------------------------------------------------
+
+@app.get("/health")
 def health():
     return {"ok": True, "app_version": APP_VERSION}
 
 
-@app.get("/__whoami", response_model=None)
-def __whoami():
+@app.get("/__whoami")
+def whoami():
     return {
         "file": __file__,
         "cwd": os.getcwd(),
         "python": sys.executable,
         "runs_dir": RUNS_DIR,
-        "app_version": APP_VERSION,
-        "cors_origins": allowed_origins,
     }
 
 
 # ---------------------------------------------------------
-# Core Logic
+# Experiment Jobs
 # ---------------------------------------------------------
 
-RESERVED_TOPLEVEL_KEYS = {"request", "_meta", "_debug_signature"}
+@app.post("/experiments/sweep")
+def create_sweep_experiment(req: SweepExperimentRequest):
+
+    payload = req.model_dump(exclude_none=True)
+
+    job = create_job(job_type="sweep", message="Sweep job created")
+
+    start_sweep_job(job.job_id, payload)
+
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "message": job.message,
+    }
 
 
-def compute_compare_payload(req: CompareRequest) -> dict[str, Any]:
+@app.get("/experiments/jobs")
+def get_experiment_jobs():
+
+    jobs = list_jobs()
+
+    return [
+        {
+            "job_id": j.job_id,
+            "job_type": j.job_type,
+            "status": j.status,
+            "progress": j.progress,
+            "message": j.message,
+            "error": j.error,
+            "created_at": j.created_at,
+            "started_at": j.started_at,
+            "finished_at": j.finished_at,
+        }
+        for j in jobs
+    ]
+
+
+@app.get("/experiments/jobs/{job_id}")
+def get_experiment_job(job_id: str):
+
+    job = get_job(job_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail="job_not_found")
+
+    return {
+        "job_id": job.job_id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "progress": job.progress,
+        "message": job.message,
+        "result": job.result,
+        "error": job.error,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+    }
+
+
+# ---------------------------------------------------------
+# Compare endpoint
+# ---------------------------------------------------------
+
+@app.post("/compare")
+def compare(req: CompareRequest):
+
     from numerical_lab.expr.safe_eval import compile_expr
 
     f = compile_expr(req.expr)
@@ -233,10 +362,7 @@ def compute_compare_payload(req: CompareRequest) -> dict[str, Any]:
     df = None
     if not req.numerical_derivative:
         df = compile_expr(req.dexpr)
-    elif req.dexpr and req.dexpr.strip():
-        df = compile_expr(req.dexpr)
 
-    # Safe defaults for secant
     sec_x0, sec_x1 = _default_secant_guesses(req.a, req.b, req.x0, req.x1)
 
     comp = NumericalEngine.compare_methods(
@@ -249,25 +375,16 @@ def compute_compare_payload(req: CompareRequest) -> dict[str, Any]:
         newton_x0=sec_x0,
     )
 
-    if not comp:
-        raise HTTPException(
-            status_code=500,
-            detail="compare_methods returned no method results (empty)."
-        )
-
     summaries = build_comparison_summary(comp)
 
-    response: dict[str, Any] = {}
+    out = {"request": req.model_dump()}
 
     for method, triple in comp.items():
+
         result, conv, stab = triple
         summary = summaries[method]
 
-        key = str(method)
-        if key in RESERVED_TOPLEVEL_KEYS:
-            key = f"method_{key}"
-
-        response[key] = {
+        out[method] = {
             "summary": summary.__dict__,
             "explanation": explain_run(summary, result),
             "trace": {
@@ -287,80 +404,19 @@ def compute_compare_payload(req: CompareRequest) -> dict[str, Any]:
             },
         }
 
-    return response
-
-
-# ---------------------------------------------------------
-# API Endpoints
-# ---------------------------------------------------------
-
-@app.post("/experiments/sweep")
-def create_sweep_experiment(req: SweepExperimentRequest):
-    payload = req.model_dump()
-    job = create_job(job_type="sweep", message="Sweep job created")
-    start_sweep_job(job.job_id, payload)
-    return {
-        "job_id": job.job_id,
-        "status": job.status,
-        "message": job.message,
-    }
-
-
-@app.get("/experiments/jobs")
-def get_experiment_jobs():
-    jobs = list_jobs()
-    return [
-        {
-            "job_id": j.job_id,
-            "job_type": j.job_type,
-            "status": j.status,
-            "progress": j.progress,
-            "message": j.message,
-            "error": j.error,
-        }
-        for j in jobs
-    ]
-
-
-@app.get("/experiments/jobs/{job_id}")
-def get_experiment_job(job_id: str):
-    job = get_job(job_id)
-    if not job:
-        return {"error": "job_not_found"}
-    return {
-        "job_id": job.job_id,
-        "job_type": job.job_type,
-        "status": job.status,
-        "progress": job.progress,
-        "message": job.message,
-        "result": job.result,
-        "error": job.error,
-    }
-
-@app.post("/compare", response_model=None)
-def compare(req: CompareRequest):
-    methods_payload = compute_compare_payload(req)
-    out: dict[str, Any] = {"request": req.model_dump()}
-    for k, v in methods_payload.items():
-        out[k] = v
     return out
 
 
+# ---------------------------------------------------------
+# Runs storage
+# ---------------------------------------------------------
+
 @app.post("/runs", response_model=CreateRunResponse)
 def create_run(req: CompareRequest):
-    methods_payload = compute_compare_payload(req)
 
-    ordered: dict[str, Any] = {
-        "_debug_signature": "REQ_TOP_V1",
-        "request": req.model_dump(),
-    }
+    payload = compare(req)
 
-    for k, v in methods_payload.items():
-        if k in RESERVED_TOPLEVEL_KEYS:
-            k = f"method_{k}"
-        ordered[k] = v
-
-    run_id = save_run(ordered)
+    run_id = save_run(payload)
 
     return CreateRunResponse(
         run_id=run_id,
@@ -368,59 +424,37 @@ def create_run(req: CompareRequest):
     )
 
 
-@app.get("/runs/{run_id}", response_model=None)
+@app.get("/runs/{run_id}")
 def get_run(run_id: str):
+
     try:
         return load_run(run_id)
+
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+        raise HTTPException(status_code=404, detail="Run not found")
 
 
-@app.get("/runs", response_model=None)
+@app.get("/runs")
 def get_recent_runs(limit: int = Query(20, ge=1, le=200)):
+
     return {"runs": list_runs(limit)}
 
-@app.get("/benchmarks", response_model=None)
+
+# ---------------------------------------------------------
+# Benchmarks
+# ---------------------------------------------------------
+
+@app.get("/benchmarks")
 def benchmarks():
     return {"benchmarks": list_benchmarks()}
 
-@app.get("/benchmarks/{bench_id}", response_model=None)
+
+@app.get("/benchmarks/{bench_id}")
 def benchmark_by_id(bench_id: str):
+
     obj = get_benchmark(bench_id)
+
     if obj is None:
-        raise HTTPException(status_code=404, detail=f"Benchmark not found: {bench_id}")
+        raise HTTPException(status_code=404, detail="Benchmark not found")
+
     return obj
-# ---------------------------------------------------------
-# Serve React build (single-tunnel demo)
-# ---------------------------------------------------------
-
-# ✅ Cross-platform default path (works on Render/Linux and locally if build exists in repo)
-FRONTEND_BUILD_DIR = os.environ.get(
-    "NUM_LAB_FRONTEND_BUILD",
-    os.path.join(os.getcwd(), "numerical-ui", "build")
-)
-
-if os.path.isdir(FRONTEND_BUILD_DIR):
-    static_dir = os.path.join(FRONTEND_BUILD_DIR, "static")
-    if os.path.isdir(static_dir):
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
-    @app.get("/", response_model=None)
-    def serve_root():
-        return FileResponse(os.path.join(FRONTEND_BUILD_DIR, "index.html"))
-
-    @app.get("/{path:path}", response_model=None)
-    def serve_spa(path: str):
-        full_path = os.path.join(FRONTEND_BUILD_DIR, path)
-        if os.path.isfile(full_path):
-            return FileResponse(full_path)
-        return FileResponse(os.path.join(FRONTEND_BUILD_DIR, "index.html"))
-else:
-    @app.get("/", response_model=None)
-    def root_missing_build():
-        return {
-            "ok": True,
-            "message": "React build not found. Run `npm run build` in numerical-ui.",
-            "docs": "/docs",
-            "frontend_build_dir": FRONTEND_BUILD_DIR,
-        }

@@ -477,6 +477,7 @@ export default function Home() {
           marginBottom: 18,
           paddingBottom: 10,
           borderBottom: "1px solid #ddd",
+          flexWrap: "wrap",
         }}
       >
         <button
@@ -507,6 +508,21 @@ export default function Home() {
           }}
         >
           Experiments
+        </button>
+
+        <button
+          onClick={() => navigate("/experiment-jobs")}
+          style={{
+            border: "1px solid #222",
+            background: "white",
+            color: "#111",
+            padding: "6px 12px",
+            borderRadius: 8,
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          Experiment Jobs
         </button>
       </div>
 

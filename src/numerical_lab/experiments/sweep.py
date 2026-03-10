@@ -17,6 +17,7 @@ from numerical_lab.methods.secant import SecantSolver
 from numerical_lab.experiments.discover_roots import RootCluster, discover_roots
 from numerical_lab.analytics.sweep_analytics import generate_sweep_analytics
 
+
 # -----------------------------
 # Problem specification
 # -----------------------------
@@ -71,6 +72,20 @@ class SweepRunRecord:
 
 
 # -----------------------------
+# Supported methods
+# -----------------------------
+
+
+SUPPORTED_METHODS = {
+    "newton",
+    "secant",
+    "bisection",
+    "hybrid",
+    "safeguarded_newton",
+}
+
+
+# -----------------------------
 # Utilities
 # -----------------------------
 
@@ -90,6 +105,48 @@ def safe_float(x: Any) -> Optional[float]:
         return None
     except Exception:
         return None
+
+
+def normalize_methods(methods: Optional[Sequence[str]]) -> List[str]:
+    if not methods:
+        return ["newton", "secant", "bisection", "hybrid", "safeguarded_newton"]
+
+    out: List[str] = []
+    seen = set()
+
+    for m in methods:
+        name = str(m).strip()
+        if name in SUPPORTED_METHODS and name not in seen:
+            seen.add(name)
+            out.append(name)
+
+    return out
+
+
+def parse_range_like(
+    value: Any,
+    *,
+    fallback_min: float,
+    fallback_max: float,
+) -> Tuple[float, float]:
+    """
+    Accepts:
+    - tuple/list: [xmin, xmax]
+    - dict: {"x_min": ..., "x_max": ...}
+    - None -> fallback
+    """
+    if value is None:
+        return float(fallback_min), float(fallback_max)
+
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        return float(value[0]), float(value[1])
+
+    if isinstance(value, dict):
+        x_min = value.get("x_min", fallback_min)
+        x_max = value.get("x_max", fallback_max)
+        return float(x_min), float(x_max)
+
+    return float(fallback_min), float(fallback_max)
 
 
 def extract_events(result: Any) -> List[dict]:
@@ -128,33 +185,28 @@ def extract_root(result: Any) -> Optional[float]:
 
 
 def extract_abs_f_final(result: Any) -> Optional[float]:
-    # 1. Best direct candidate from SolverResult
     best_fx = getattr(result, "best_fx", None)
     if best_fx is not None:
         val = safe_float(best_fx)
         if val is not None:
             return abs(val)
 
-    # 2. Use the last iteration record if available
     records = getattr(result, "records", None)
     if isinstance(records, list) and records:
         last = records[-1]
 
-        # Try residual first
         residual = getattr(last, "residual", None)
         if residual is not None:
             val = safe_float(residual)
             if val is not None:
                 return abs(val)
 
-        # Then try fx
         fx = getattr(last, "fx", None)
         if fx is not None:
             val = safe_float(fx)
             if val is not None:
                 return abs(val)
 
-    # 3. Generic fallbacks
     for field in ("abs_f_final", "final_abs_f", "residual", "fx"):
         if hasattr(result, field):
             val = safe_float(getattr(result, field))
@@ -218,6 +270,7 @@ def maybe_match_known_root(
             return float(r)
     return None
 
+
 def assign_root_id(
     root: Optional[float],
     clusters: Optional[List[RootCluster]],
@@ -255,6 +308,114 @@ def create_sweep_folder(base: str | Path = "outputs/sweeps") -> Tuple[str, Path]
 
 
 # -----------------------------
+# Benchmark definitions
+# -----------------------------
+
+
+DEFAULT_PROBLEMS: List[SweepProblem] = [
+    SweepProblem(
+        problem_id="p1",
+        expr="x**3 - 2*x + 2",
+        dexpr="3*x**2 - 2",
+        scalar_range=(-4.0, 4.0),
+        secant_range=(-4.0, 4.0),
+        bracket_search_range=(-4.0, 4.0),
+    ),
+    SweepProblem(
+        problem_id="p2",
+        expr="x**3 - x - 2",
+        dexpr="3*x**2 - 1",
+        scalar_range=(-4.0, 4.0),
+        secant_range=(-4.0, 4.0),
+        bracket_search_range=(-4.0, 4.0),
+    ),
+    SweepProblem(
+        problem_id="p3",
+        expr="cos(x) - x",
+        dexpr="-sin(x) - 1",
+        scalar_range=(-4.0, 4.0),
+        secant_range=(-4.0, 4.0),
+        bracket_search_range=(-4.0, 4.0),
+    ),
+    SweepProblem(
+        problem_id="p4",
+        expr="(x-1)**2 * (x+2)",
+        dexpr="2*(x-1)*(x+2) + (x-1)**2",
+        scalar_range=(-4.0, 4.0),
+        secant_range=(-4.0, 4.0),
+        bracket_search_range=(-4.0, 4.0),
+    ),
+]
+
+
+DEFAULT_PROBLEM_MAP: Dict[str, SweepProblem] = {
+    p.problem_id: p for p in DEFAULT_PROBLEMS
+}
+
+
+def get_default_problem(problem_id: Optional[str]) -> SweepProblem:
+    pid = str(problem_id or "p4").strip()
+    if pid not in DEFAULT_PROBLEM_MAP:
+        raise ValueError(f"Unknown benchmark problem_id: {pid}")
+    return DEFAULT_PROBLEM_MAP[pid]
+
+
+def build_custom_problem(
+    *,
+    expr: str,
+    dexpr: Optional[str],
+    x_min: Optional[float] = None,
+    x_max: Optional[float] = None,
+    scalar_range: Any = None,
+    secant_range: Any = None,
+    bracket_search_range: Any = None,
+    problem_id: str = "custom",
+) -> SweepProblem:
+    expr_clean = str(expr or "").strip()
+    dexpr_clean = str(dexpr).strip() if dexpr is not None and str(dexpr).strip() else None
+
+    if not expr_clean:
+        raise ValueError("Custom problem requires expr.")
+
+    fallback_min = float(-4.0 if x_min is None else x_min)
+    fallback_max = float(4.0 if x_max is None else x_max)
+
+    scalar_rng = parse_range_like(
+        scalar_range,
+        fallback_min=fallback_min,
+        fallback_max=fallback_max,
+    )
+    secant_rng = parse_range_like(
+        secant_range,
+        fallback_min=scalar_rng[0],
+        fallback_max=scalar_rng[1],
+    )
+    bracket_rng = parse_range_like(
+        bracket_search_range,
+        fallback_min=scalar_rng[0],
+        fallback_max=scalar_rng[1],
+    )
+
+    if scalar_rng[0] >= scalar_rng[1]:
+        raise ValueError("Custom scalar range must satisfy x_min < x_max.")
+
+    if secant_rng[0] >= secant_rng[1]:
+        raise ValueError("Custom secant range must satisfy x_min < x_max.")
+
+    if bracket_rng[0] >= bracket_rng[1]:
+        raise ValueError("Custom bracket search range must satisfy x_min < x_max.")
+
+    return SweepProblem(
+        problem_id=problem_id,
+        expr=expr_clean,
+        dexpr=dexpr_clean,
+        scalar_range=scalar_rng,
+        secant_range=secant_rng,
+        bracket_search_range=bracket_rng,
+    )
+
+
+# -----------------------------
 # Bracket generation
 # -----------------------------
 
@@ -269,9 +430,7 @@ def find_sign_change_brackets(
     xs = linspace(x_min, x_max, grid_size)
     brackets: List[Tuple[float, float]] = []
 
-    # Try multiple window sizes so we get many valid brackets
     window_sizes = [2, 3, 5, 9, 17, 33]
-
     seen = set()
 
     for w in window_sizes:
@@ -389,6 +548,7 @@ def result_to_record(
     flags = event_flags(events)
     root_value = extract_root(result) if result is not None else None
     assigned_root_id = assign_root_id(root_value, clusters)
+
     return SweepRunRecord(
         problem_id=problem.problem_id,
         method=method,
@@ -427,17 +587,29 @@ def result_to_record(
 def run_problem_sweeps(
     problem: SweepProblem,
     *,
+    methods: Optional[Sequence[str]] = None,
     scalar_points: int = 1000,
-    secant_points: int = 1000,
-    bracket_points: int = 1000,
+    secant_points: Optional[int] = None,
+    bracket_points: Optional[int] = None,
     tol: float = 1e-10,
     max_iter: int = 100,
 ) -> List[SweepRunRecord]:
+    methods_to_run = normalize_methods(methods)
+    if not methods_to_run:
+        raise ValueError("No valid methods selected.")
+
+    if secant_points is None:
+        secant_points = scalar_points
+    if bracket_points is None:
+        bracket_points = scalar_points
+
     f = compile_expr(problem.expr)
     df = compile_expr(problem.dexpr) if problem.dexpr else None
     discovered_clusters: Optional[List[RootCluster]] = None
 
-    if problem.dexpr is not None:
+    if problem.dexpr is not None and any(
+        m in methods_to_run for m in ("newton", "hybrid", "safeguarded_newton")
+    ):
         discovered_clusters = discover_roots(
             expr=problem.expr,
             dexpr=problem.dexpr,
@@ -449,172 +621,180 @@ def run_problem_sweeps(
             cluster_tol=1e-4,
             residual_tol=1e-8,
         )
+
     records: List[SweepRunRecord] = []
 
-    # Newton scalar starts
-    x_min, x_max = problem.scalar_range
-    scalar_grid = linspace(x_min, x_max, scalar_points)
+    if "newton" in methods_to_run:
+        x_min, x_max = problem.scalar_range
+        scalar_grid = linspace(x_min, x_max, scalar_points)
 
-    for i, x0 in enumerate(scalar_grid):
-        if df is not None:
+        for i, x0 in enumerate(scalar_grid):
+            if df is not None:
+                try:
+                    res = run_newton(f, df, x0=x0, tol=tol, max_iter=max_iter)
+                    records.append(
+                        result_to_record(
+                            problem,
+                            "newton",
+                            i,
+                            res,
+                            x0=x0,
+                            clusters=discovered_clusters,
+                        )
+                    )
+                except Exception as exc:
+                    records.append(
+                        result_to_record(
+                            problem,
+                            "newton",
+                            i,
+                            None,
+                            x0=x0,
+                            error_message=str(exc),
+                            clusters=discovered_clusters,
+                        )
+                    )
+
+    if "secant" in methods_to_run:
+        s_min, s_max = problem.secant_range
+        secant_grid = linspace(s_min, s_max, secant_points + 1)
+
+        for i in range(secant_points):
+            x0, x1 = secant_grid[i], secant_grid[i + 1]
             try:
-                res = run_newton(f, df, x0=x0, tol=tol, max_iter=max_iter)
+                res = run_secant(f, x0=x0, x1=x1, tol=tol, max_iter=max_iter)
                 records.append(
                     result_to_record(
                         problem,
-                        "newton",
+                        "secant",
                         i,
                         res,
                         x0=x0,
+                        x1=x1,
                         clusters=discovered_clusters,
                     )
                 )
             except Exception as exc:
-                 records.append(
+                records.append(
                     result_to_record(
                         problem,
-                        "newton",
+                        "secant",
                         i,
                         None,
                         x0=x0,
+                        x1=x1,
                         error_message=str(exc),
                         clusters=discovered_clusters,
                     )
                 )
 
-    # Secant adjacent pairs
-    s_min, s_max = problem.secant_range
-    secant_grid = linspace(s_min, s_max, secant_points + 1)
-
-    for i in range(secant_points):
-        x0, x1 = secant_grid[i], secant_grid[i + 1]
-        try:
-            res = run_secant(f, x0=x0, x1=x1, tol=tol, max_iter=max_iter)
-            records.append(
-                result_to_record(
-                    problem,
-                    "secant",
-                    i,
-                    res,
-                    x0=x0,
-                    x1=x1,
-                    clusters=discovered_clusters,
-                )
-            )    
-        except Exception as exc:
-            records.append(
-                result_to_record(
-                    problem,
-                    "secant",
-                    i,
-                    None,
-                    x0=x0,
-                    x1=x1,
-                    error_message=str(exc),
-                    clusters=discovered_clusters,
-                )
-            )
-
-    # Brackets for bisection / hybrid / safeguarded newton
-    b_min, b_max = problem.bracket_search_range
-    brackets = find_sign_change_brackets(
-        f=f,
-        x_min=b_min,
-        x_max=b_max,
-        grid_size=max(2000, bracket_points * 3),
-        max_brackets=bracket_points,
+    need_brackets = any(
+        m in methods_to_run for m in ("bisection", "hybrid", "safeguarded_newton")
     )
 
-    for i, (a, b) in enumerate(brackets):
-        try:
-            res = run_bisection(f, a=a, b=b, tol=tol, max_iter=max_iter)
-            records.append(
-                result_to_record(
-                    problem,
-                    "bisection",
-                    i,
-                    res,
-                    a=a,
-                    b=b,
-                    clusters=discovered_clusters,
-                )
-            )
-        except Exception as exc:
-            records.append(
-                result_to_record(
-                    problem,
-                    "bisection",
-                    i,
-                    None,
-                    a=a,
-                    b=b,
-                    error_message=str(exc),
-                    clusters=discovered_clusters,
-                )
-            )
+    if need_brackets:
+        b_min, b_max = problem.bracket_search_range
+        brackets = find_sign_change_brackets(
+            f=f,
+            x_min=b_min,
+            x_max=b_max,
+            grid_size=max(2000, bracket_points * 3),
+            max_brackets=bracket_points,
+        )
 
-        if df is not None:
-            x0_mid = 0.5 * (a + b)
+        for i, (a, b) in enumerate(brackets):
+            if "bisection" in methods_to_run:
+                try:
+                    res = run_bisection(f, a=a, b=b, tol=tol, max_iter=max_iter)
+                    records.append(
+                        result_to_record(
+                            problem,
+                            "bisection",
+                            i,
+                            res,
+                            a=a,
+                            b=b,
+                            clusters=discovered_clusters,
+                        )
+                    )
+                except Exception as exc:
+                    records.append(
+                        result_to_record(
+                            problem,
+                            "bisection",
+                            i,
+                            None,
+                            a=a,
+                            b=b,
+                            error_message=str(exc),
+                            clusters=discovered_clusters,
+                        )
+                    )
 
-            try:
-                res = run_hybrid(f, df, a=a, b=b, tol=tol, max_iter=max_iter)
-                records.append(
-                    result_to_record(
-                        problem,
-                        "hybrid",
-                        i,
-                        res,
-                        x0=x0_mid,
-                        a=a,
-                        b=b,
-                        clusters=discovered_clusters,
-                    )
-                )           
-            except Exception as exc:
-                records.append(
-                    result_to_record(
-                        problem,
-                        "hybrid",
-                        i,
-                        None,
-                        x0=x0_mid,
-                        a=a,
-                        b=b,
-                        error_message=str(exc),
-                        clusters=discovered_clusters,
-                    )
-                )
+            if df is not None:
+                x0_mid = 0.5 * (a + b)
 
-            try:
-                res = run_safeguarded_newton(
-                    f, df, x0=x0_mid, a=a, b=b, tol=tol, max_iter=max_iter
-                )
-                records.append(
-                    result_to_record(
-                        problem,
-                        "safeguarded_newton",
-                        i,
-                        res,
-                        x0=x0_mid,
-                        a=a,
-                        b=b,
-                        clusters=discovered_clusters,
-                    )
-                )
-            except Exception as exc:
-                records.append(
-                    result_to_record(
-                        problem,
-                        "safeguarded_newton",
-                        i,
-                        None,
-                        x0=x0_mid,
-                        a=a,
-                        b=b,
-                        error_message=str(exc),
-                        clusters=discovered_clusters,
-                    )
-                )
+                if "hybrid" in methods_to_run:
+                    try:
+                        res = run_hybrid(f, df, a=a, b=b, tol=tol, max_iter=max_iter)
+                        records.append(
+                            result_to_record(
+                                problem,
+                                "hybrid",
+                                i,
+                                res,
+                                x0=x0_mid,
+                                a=a,
+                                b=b,
+                                clusters=discovered_clusters,
+                            )
+                        )
+                    except Exception as exc:
+                        records.append(
+                            result_to_record(
+                                problem,
+                                "hybrid",
+                                i,
+                                None,
+                                x0=x0_mid,
+                                a=a,
+                                b=b,
+                                error_message=str(exc),
+                                clusters=discovered_clusters,
+                            )
+                        )
+
+                if "safeguarded_newton" in methods_to_run:
+                    try:
+                        res = run_safeguarded_newton(
+                            f, df, x0=x0_mid, a=a, b=b, tol=tol, max_iter=max_iter
+                        )
+                        records.append(
+                            result_to_record(
+                                problem,
+                                "safeguarded_newton",
+                                i,
+                                res,
+                                x0=x0_mid,
+                                a=a,
+                                b=b,
+                                clusters=discovered_clusters,
+                            )
+                        )
+                    except Exception as exc:
+                        records.append(
+                            result_to_record(
+                                problem,
+                                "safeguarded_newton",
+                                i,
+                                None,
+                                x0=x0_mid,
+                                a=a,
+                                b=b,
+                                error_message=str(exc),
+                                clusters=discovered_clusters,
+                            )
+                        )
 
     return records
 
@@ -715,14 +895,10 @@ def summarize_records(
             status_counts[k] = status_counts.get(k, 0) + 1
 
         cap_hits_all = sum(
-            1
-            for r in group
-            if r.iterations is not None and r.iterations >= max_iter
+            1 for r in group if r.iterations is not None and r.iterations >= max_iter
         )
         cap_hits_success = sum(
-            1
-            for r in success
-            if r.iterations is not None and r.iterations >= max_iter
+            1 for r in success if r.iterations is not None and r.iterations >= max_iter
         )
 
         key = f"{problem_id}:{method}"
@@ -755,9 +931,7 @@ def summarize_records(
             },
             "cap_hit_rates": {
                 "all_runs": (cap_hits_all / total) if total else None,
-                "success_only": (cap_hits_success / len(success))
-                if success
-                else None,
+                "success_only": (cap_hits_success / len(success)) if success else None,
             },
             "residuals_all": {
                 "mean": mean_or_none(residuals_all),
@@ -779,9 +953,7 @@ def summarize_records(
             },
             "event_flags": {
                 "derivative_zero_rate": (
-                    sum(r.has_derivative_zero for r in group) / total
-                    if total
-                    else None
+                    sum(r.has_derivative_zero for r in group) / total if total else None
                 ),
                 "stagnation_rate": (
                     sum(r.has_stagnation for r in group) / total if total else None
@@ -805,48 +977,128 @@ def summary_to_json(summary: Dict[str, Any], path: str | Path) -> None:
 
 
 # -----------------------------
-# Benchmark definitions
+# High-level experiment runner
 # -----------------------------
 
 
-DEFAULT_PROBLEMS: List[SweepProblem] = [
-    SweepProblem(
-        problem_id="p1",
-        expr="x**3 - 2*x + 2",
-        dexpr="3*x**2 - 2",
-        scalar_range=(-4.0, 4.0),
-        secant_range=(-4.0, 4.0),
-        bracket_search_range=(-4.0, 4.0),
-    ),
-    SweepProblem(
-        problem_id="p2",
-        expr="x**3 - x - 2",
-        dexpr="3*x**2 - 1",
-        scalar_range=(-4.0, 4.0),
-        secant_range=(-4.0, 4.0),
-        bracket_search_range=(-4.0, 4.0),
-    ),
-    SweepProblem(
-        problem_id="p3",
-        expr="cos(x) - x",
-        dexpr="-sin(x) - 1",
-        scalar_range=(-4.0, 4.0),
-        secant_range=(-4.0, 4.0),
-        bracket_search_range=(-4.0, 4.0),
-    ),
-    SweepProblem(
-        problem_id="p4",
-        expr="(x-1)**2 * (x+2)",
-        dexpr="2*(x-1)*(x+2) + (x-1)**2",
-        scalar_range=(-4.0, 4.0),
-        secant_range=(-4.0, 4.0),
-        bracket_search_range=(-4.0, 4.0),
-    ),
-]
+def run_single_sweep_experiment(
+    *,
+    problem_mode: str = "benchmark",
+    problem_id: Optional[str] = None,
+    expr: Optional[str] = None,
+    dexpr: Optional[str] = None,
+    x_min: Optional[float] = None,
+    x_max: Optional[float] = None,
+    scalar_range: Any = None,
+    secant_range: Any = None,
+    bracket_search_range: Any = None,
+    methods: Optional[Sequence[str]] = None,
+    n_points: int = 100,
+    tol: float = 1e-10,
+    max_iter: int = 100,
+    output_dir: str | Path = "outputs/sweeps",
+) -> Dict[str, Any]:
+    mode = str(problem_mode or "benchmark").strip().lower()
+    selected_methods = normalize_methods(methods)
+
+    if not selected_methods:
+        raise ValueError("No valid methods selected.")
+
+    if mode == "custom":
+        problem = build_custom_problem(
+            expr=str(expr or "").strip(),
+            dexpr=dexpr,
+            x_min=x_min,
+            x_max=x_max,
+            scalar_range=scalar_range,
+            secant_range=secant_range,
+            bracket_search_range=bracket_search_range,
+            problem_id="custom",
+        )
+    else:
+        problem = get_default_problem(problem_id)
+
+    sweep_id, sweep_path = create_sweep_folder(base=output_dir)
+
+    records = run_problem_sweeps(
+        problem,
+        methods=selected_methods,
+        scalar_points=int(n_points),
+        secant_points=int(n_points),
+        bracket_points=int(n_points),
+        tol=float(tol),
+        max_iter=int(max_iter),
+    )
+
+    records_csv_path = sweep_path / "records.csv"
+    records_json_path = sweep_path / "records.json"
+    summary_json_path = sweep_path / "summary.json"
+    metadata_json_path = sweep_path / "metadata.json"
+
+    records_to_csv(records, records_csv_path)
+    records_to_json(records, records_json_path)
+
+    summary = summarize_records(records, max_iter=int(max_iter))
+    summary_to_json(summary, summary_json_path)
+
+    methods_present = sorted({r.method for r in records if r.method})
+    analytics_dir = sweep_path / problem.problem_id
+
+    analytics_manifest = {
+        problem.problem_id: generate_sweep_analytics(
+            rows=[asdict(r) for r in records],
+            methods=methods_present,
+            outdir=analytics_dir,
+        )
+    }
+
+    metadata = {
+        "sweep_id": sweep_id,
+        "created_at": datetime.now().isoformat(),
+        "problem_mode": mode,
+        "problem_id": problem.problem_id,
+        "expr": problem.expr,
+        "dexpr": problem.dexpr,
+        "scalar_range": list(problem.scalar_range),
+        "secant_range": list(problem.secant_range),
+        "bracket_search_range": list(problem.bracket_search_range),
+        "n_points": int(n_points),
+        "tol": float(tol),
+        "max_iter": int(max_iter),
+        "methods": selected_methods,
+    }
+
+    metadata_json_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    basin_map = None
+    analytics_block = analytics_manifest.get(problem.problem_id, {})
+    if isinstance(analytics_block, dict):
+        basin_map = analytics_block.get("basin_map")
+
+    return {
+        "sweep_id": sweep_id,
+        "latest_sweep_dir": str(sweep_path).replace("\\", "/"),
+        "problem_mode": mode,
+        "problem_id": problem.problem_id,
+        "expr": problem.expr,
+        "dexpr": problem.dexpr,
+        "methods": selected_methods,
+        "records_csv": f"/{records_csv_path.as_posix()}",
+        "records_json": f"/{records_json_path.as_posix()}",
+        "summary_json": f"/{summary_json_path.as_posix()}",
+        "metadata_json": f"/{metadata_json_path.as_posix()}",
+        "artifacts": {
+            "basin_map": basin_map,
+            "analytics": analytics_manifest,
+        },
+        "boundaries": [],
+        "summary": summary,
+        "metadata": metadata,
+    }
 
 
 # -----------------------------
-# Main runner
+# Main runner for defaults
 # -----------------------------
 
 
@@ -864,9 +1116,11 @@ def run_all_default_sweeps(
 
     all_records: List[SweepRunRecord] = []
     analytics_manifest: Dict[str, Any] = {}
-    for problem in [p for p in DEFAULT_PROBLEMS if p.problem_id == "p4"]:
+
+    for problem in DEFAULT_PROBLEMS:
         records = run_problem_sweeps(
             problem,
+            methods=["newton", "secant", "bisection", "hybrid", "safeguarded_newton"],
             scalar_points=scalar_points,
             secant_points=secant_points,
             bracket_points=bracket_points,
@@ -875,8 +1129,10 @@ def run_all_default_sweeps(
         )
         all_records.extend(records)
 
-        records_to_csv(records, sweep_path / f"{problem.problem_id}_runs.csv")
-        records_to_json(records, sweep_path / f"{problem.problem_id}_runs.json")
+        problem_csv = sweep_path / f"{problem.problem_id}_runs.csv"
+        problem_json = sweep_path / f"{problem.problem_id}_runs.json"
+        records_to_csv(records, problem_csv)
+        records_to_json(records, problem_json)
 
         methods_present = sorted({r.method for r in records if r.method})
         analytics_dir = sweep_path / problem.problem_id
@@ -886,6 +1142,7 @@ def run_all_default_sweeps(
             methods=methods_present,
             outdir=analytics_dir,
         )
+
     summary = summarize_records(all_records, max_iter=max_iter)
     records_to_csv(all_records, sweep_path / "records.csv")
     records_to_json(all_records, sweep_path / "records.json")
@@ -915,14 +1172,14 @@ def run_all_default_sweeps(
 
 
 if __name__ == "__main__":
-    result = run_all_default_sweeps(
-        output_dir="outputs/sweeps",
-        scalar_points=100,
-        secant_points=100,
-        bracket_points=100,
+    result = run_single_sweep_experiment(
+        problem_mode="benchmark",
+        problem_id="p4",
+        methods=["newton", "secant", "bisection", "hybrid", "safeguarded_newton"],
+        n_points=100,
         tol=1e-10,
         max_iter=100,
+        output_dir="outputs/sweeps",
     )
     print("DONE")
-    print(json.dumps(result["summary"]["p4:newton"], indent=2))
-    print(json.dumps(result["analytics"]["p4"], indent=2))
+    print(json.dumps(result["metadata"], indent=2))

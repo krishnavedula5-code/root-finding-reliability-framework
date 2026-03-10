@@ -16,11 +16,16 @@ import {
 import BadgePills from "./BadgePills";
 import { computeBadges } from "./diagnosticsBadges";
 import { computeHint } from "./diagnosticsHints";
-
-// ✅ shared severity timeline renderer (you created this)
 import EventTimeline from "./EventTimeline";
 
-ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
+ChartJS.register(
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend
+);
 
 // In dev (localhost:3000), CRA proxy forwards /runs/:id -> http://localhost:8000
 // In prod (served by FastAPI), same-origin also works.
@@ -109,7 +114,6 @@ async function copyText(text, successMsg) {
     await navigator.clipboard.writeText(text);
     alert(successMsg);
   } catch {
-    // Reliable fallback when clipboard API is blocked
     window.prompt("Copy to clipboard (Ctrl/Cmd+C, Enter):", text);
   }
 }
@@ -130,10 +134,7 @@ export default function RunViewer() {
   const [err, setErr] = useState("");
   const [data, setData] = useState(null);
 
-  // collapsible method panels: method -> open/closed
   const [openPanels, setOpenPanels] = useState({});
-
-  // per-method "show all" toggles
   const [showAllRecords, setShowAllRecords] = useState({});
   const [showAllEvents, setShowAllEvents] = useState({});
 
@@ -199,7 +200,9 @@ export default function RunViewer() {
     if (!data) return [];
     const ignore = new Set(["request", "_meta"]);
     return Object.keys(data)
-      .filter((k) => !ignore.has(k) && typeof data[k] === "object" && data[k] !== null)
+      .filter(
+        (k) => !ignore.has(k) && typeof data[k] === "object" && data[k] !== null
+      )
       .sort((a, b) => {
         if (a === bestMethod) return -1;
         if (b === bestMethod) return 1;
@@ -232,7 +235,6 @@ export default function RunViewer() {
     return null;
   }, [data]);
 
-  // initialize panel open states + toggles when new run loads
   useEffect(() => {
     if (!data) return;
 
@@ -241,9 +243,9 @@ export default function RunViewer() {
     const initShowEvents = {};
 
     methods.forEach((m) => {
-      initPanels[m] = m === bestMethod; // best open by default
-      initShowRecords[m] = false; // show less by default
-      initShowEvents[m] = false; // show less by default
+      initPanels[m] = m === bestMethod;
+      initShowRecords[m] = false;
+      initShowEvents[m] = false;
     });
 
     setOpenPanels(initPanels);
@@ -264,13 +266,17 @@ export default function RunViewer() {
 
   function setAllPanels(open) {
     const next = {};
-    methods.forEach((m) => (next[m] = open));
+    methods.forEach((m) => {
+      next[m] = open;
+    });
     setOpenPanels(next);
   }
 
   function openBestOnly() {
     const next = {};
-    methods.forEach((m) => (next[m] = m === bestMethod));
+    methods.forEach((m) => {
+      next[m] = m === bestMethod;
+    });
     setOpenPanels(next);
   }
 
@@ -289,11 +295,23 @@ export default function RunViewer() {
   }
 
   if (loading) return <div style={{ padding: 20 }}>Loading run…</div>;
-  if (err) return <div style={{ padding: 20, color: "crimson", whiteSpace: "pre-wrap" }}>{err}</div>;
+  if (err)
+    return (
+      <div style={{ padding: 20, color: "crimson", whiteSpace: "pre-wrap" }}>
+        {err}
+      </div>
+    );
   if (!data) return <div style={{ padding: 20 }}>No data.</div>;
 
   return (
-    <div style={{ fontFamily: "system-ui, Arial", padding: 20, maxWidth: 1100, margin: "0 auto" }}>
+    <div
+      style={{
+        fontFamily: "system-ui, Arial",
+        padding: 20,
+        maxWidth: 1100,
+        margin: "0 auto",
+      }}
+    >
       <div
         style={{
           marginBottom: 16,
@@ -302,9 +320,11 @@ export default function RunViewer() {
           alignItems: "center",
           borderBottom: "1px solid #ddd",
           paddingBottom: 10,
+          gap: 16,
+          flexWrap: "wrap",
         }}
       >
-        <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <Link to="/" style={{ fontWeight: 700 }}>
             Home
           </Link>
@@ -312,9 +332,20 @@ export default function RunViewer() {
           <Link to="/experiments" style={{ fontWeight: 700 }}>
             Experiments
           </Link>
+
+          <Link to="/experiment-jobs" style={{ fontWeight: 700 }}>
+            Experiment Jobs
+          </Link>
         </div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+          }}
+        >
           <button
             onClick={openAsNewExperiment}
             disabled={!req}
@@ -384,26 +415,53 @@ export default function RunViewer() {
       </div>
 
       {req && (
-        <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, marginBottom: 16 }}>
+        <div
+          style={{
+            border: "1px solid #ddd",
+            borderRadius: 10,
+            padding: 14,
+            marginBottom: 16,
+          }}
+        >
           <div style={{ fontWeight: 800, marginBottom: 8 }}>Problem</div>
 
-          <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 13 }}>
+          <div
+            style={{
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontSize: 13,
+            }}
+          >
             f(x) = {req.expr}
             <br />
-            {req.numerical_derivative ? "f'(x) = (numerical)" : `f'(x) = ${req.dexpr || "(none)"}`}
+            {req.numerical_derivative
+              ? "f'(x) = (numerical)"
+              : `f'(x) = ${req.dexpr || "(none)"}`}
             <br />
             bracket = [{req.a}, {req.b}] • secant guesses = ({req.x0}, {req.x1})
             <br />
             tol = {req.tol} • max_iter = {req.max_iter}
-
             {domainMathHint && (
-              <div style={{ marginTop: 6, fontSize: 12, color: "#b26a00", fontWeight: 600 }}>
+              <div
+                style={{
+                  marginTop: 6,
+                  fontSize: 12,
+                  color: "#b26a00",
+                  fontWeight: 600,
+                }}
+              >
                 Warning: {domainMathHint}
               </div>
             )}
-
             {bracketFailureHint && (
-              <div style={{ marginTop: 8, fontSize: 12, color: "#b26a00", fontWeight: 600 }}>
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 12,
+                  color: "#b26a00",
+                  fontWeight: 600,
+                }}
+              >
                 Warning: {bracketFailureHint}
               </div>
             )}
@@ -413,15 +471,61 @@ export default function RunViewer() {
 
       <h2>Results</h2>
 
-      <div style={{ overflowX: "auto", border: "1px solid #ddd", borderRadius: 10 }}>
+      <div
+        style={{
+          overflowX: "auto",
+          border: "1px solid #ddd",
+          borderRadius: 10,
+        }}
+      >
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "#fafafa" }}>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #ddd" }}>Method</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #ddd" }}>Status</th>
-              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #ddd" }}>Iters</th>
-              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #ddd" }}>Root</th>
-              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #ddd" }}>Last |f(x)|</th>
+              <th
+                style={{
+                  textAlign: "left",
+                  padding: 10,
+                  borderBottom: "1px solid #ddd",
+                }}
+              >
+                Method
+              </th>
+              <th
+                style={{
+                  textAlign: "left",
+                  padding: 10,
+                  borderBottom: "1px solid #ddd",
+                }}
+              >
+                Status
+              </th>
+              <th
+                style={{
+                  textAlign: "right",
+                  padding: 10,
+                  borderBottom: "1px solid #ddd",
+                }}
+              >
+                Iters
+              </th>
+              <th
+                style={{
+                  textAlign: "right",
+                  padding: 10,
+                  borderBottom: "1px solid #ddd",
+                }}
+              >
+                Root
+              </th>
+              <th
+                style={{
+                  textAlign: "right",
+                  padding: 10,
+                  borderBottom: "1px solid #ddd",
+                }}
+              >
+                Last |f(x)|
+              </th>
             </tr>
           </thead>
 
@@ -441,15 +545,33 @@ export default function RunViewer() {
                   key={m}
                   style={{
                     background: isBest ? "#fff8e6" : "white",
-                    borderLeft: isBest ? "4px solid #111" : "4px solid transparent",
+                    borderLeft: isBest
+                      ? "4px solid #111"
+                      : "4px solid transparent",
                   }}
                 >
                   <td style={{ padding: 10, borderBottom: "1px solid #eee" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 10 }}
+                    >
                       <div>
-                        <div style={{ fontWeight: 800 }}>{METHOD_META[m]?.label || m}</div>
-                        <div style={{ color: "#666", fontSize: 12 }}>{subtitle}</div>
-                        {hint ? <div style={{ color: "#555", fontSize: 12, marginTop: 4 }}>{hint}</div> : null}
+                        <div style={{ fontWeight: 800 }}>
+                          {METHOD_META[m]?.label || m}
+                        </div>
+                        <div style={{ color: "#666", fontSize: 12 }}>
+                          {subtitle}
+                        </div>
+                        {hint ? (
+                          <div
+                            style={{
+                              color: "#555",
+                              fontSize: 12,
+                              marginTop: 4,
+                            }}
+                          >
+                            {hint}
+                          </div>
+                        ) : null}
                       </div>
 
                       {isBest && (
@@ -474,16 +596,36 @@ export default function RunViewer() {
                     <BadgePills badges={badges} max={99} />
                   </td>
 
-                  <td style={{ padding: 10, borderBottom: "1px solid #eee", textAlign: "right" }}>
+                  <td
+                    style={{
+                      padding: 10,
+                      borderBottom: "1px solid #eee",
+                      textAlign: "right",
+                    }}
+                  >
                     {s.iterations ?? ""}
                   </td>
 
-                  <td style={{ padding: 10, borderBottom: "1px solid #eee", textAlign: "right" }}>
+                  <td
+                    style={{
+                      padding: 10,
+                      borderBottom: "1px solid #eee",
+                      textAlign: "right",
+                    }}
+                  >
                     {s.root == null ? "" : fmtMaybe(s.root, "prec12")}
                   </td>
 
-                  <td style={{ padding: 10, borderBottom: "1px solid #eee", textAlign: "right" }}>
-                    {s.last_residual == null ? "" : fmtMaybe(s.last_residual, "exp3")}
+                  <td
+                    style={{
+                      padding: 10,
+                      borderBottom: "1px solid #eee",
+                      textAlign: "right",
+                    }}
+                  >
+                    {s.last_residual == null
+                      ? ""
+                      : fmtMaybe(s.last_residual, "exp3")}
                   </td>
                 </tr>
               );
@@ -495,13 +637,27 @@ export default function RunViewer() {
       <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button
           onClick={() => setAllPanels(true)}
-          style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #222", background: "white", cursor: "pointer", fontWeight: 700 }}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 10,
+            border: "1px solid #222",
+            background: "white",
+            cursor: "pointer",
+            fontWeight: 700,
+          }}
         >
           Expand all
         </button>
         <button
           onClick={() => setAllPanels(false)}
-          style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #222", background: "white", cursor: "pointer", fontWeight: 700 }}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 10,
+            border: "1px solid #222",
+            background: "white",
+            cursor: "pointer",
+            fontWeight: 700,
+          }}
         >
           Collapse all
         </button>
@@ -538,8 +694,12 @@ export default function RunViewer() {
         const showAllR = !!showAllRecords[m];
         const showAllE = !!showAllEvents[m];
 
-        const recordsToShow = showAllR ? records : records.slice(0, DEFAULT_RECORDS_LIMIT);
-        const eventsToShow = showAllE ? events : events.slice(0, DEFAULT_EVENTS_LIMIT);
+        const recordsToShow = showAllR
+          ? records
+          : records.slice(0, DEFAULT_RECORDS_LIMIT);
+        const eventsToShow = showAllE
+          ? events
+          : events.slice(0, DEFAULT_EVENTS_LIMIT);
 
         const badges = computeBadges(block.summary || {}, events);
         const subtitle = methodSubtitle(m, block.summary || {}, badges);
@@ -557,7 +717,9 @@ export default function RunViewer() {
             }}
           >
             <div
-              onClick={() => setOpenPanels((prev) => ({ ...prev, [m]: !prev[m] }))}
+              onClick={() =>
+                setOpenPanels((prev) => ({ ...prev, [m]: !prev[m] }))
+              }
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -571,13 +733,27 @@ export default function RunViewer() {
               <div style={{ fontWeight: 900 }}>
                 {meta2?.label || m}
                 {subtitle ? (
-                  <span style={{ marginLeft: 10, fontWeight: 600, color: "#666", fontSize: 12 }}>
+                  <span
+                    style={{
+                      marginLeft: 10,
+                      fontWeight: 600,
+                      color: "#666",
+                      fontSize: 12,
+                    }}
+                  >
                     {subtitle}
                   </span>
                 ) : null}
 
                 {hint ? (
-                  <div style={{ marginTop: 4, color: "#555", fontSize: 12, fontWeight: 600 }}>
+                  <div
+                    style={{
+                      marginTop: 4,
+                      color: "#555",
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  >
                     {hint}
                   </div>
                 ) : null}
@@ -600,25 +776,51 @@ export default function RunViewer() {
                 </span>
               )}
 
-              <span style={{ marginLeft: "auto", fontFamily: "ui-monospace, monospace", color: "#444" }}>
+              <span
+                style={{
+                  marginLeft: "auto",
+                  fontFamily: "ui-monospace, monospace",
+                  color: "#444",
+                }}
+              >
                 {isOpen ? "▼" : "▶"}
               </span>
             </div>
 
             {!isOpen ? (
-              <div style={{ color: "#666", fontSize: 13 }}>Collapsed (click to view explanation, plot, and events)</div>
+              <div style={{ color: "#666", fontSize: 13 }}>
+                Collapsed (click to view explanation, plot, and events)
+              </div>
             ) : (
               <>
-                <div style={{ whiteSpace: "pre-wrap", color: "#222", marginBottom: 12 }}>
+                <div
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    color: "#222",
+                    marginBottom: 12,
+                  }}
+                >
                   {block.explanation || ""}
                 </div>
 
                 <div style={{ marginTop: 10, marginBottom: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      marginBottom: 8,
+                    }}
+                  >
                     <div style={{ fontWeight: 700 }}>Residual vs Iteration</div>
                     {records.length > DEFAULT_RECORDS_LIMIT && (
                       <button
-                        onClick={() => setShowAllRecords((prev) => ({ ...prev, [m]: !prev[m] }))}
+                        onClick={() =>
+                          setShowAllRecords((prev) => ({
+                            ...prev,
+                            [m]: !prev[m],
+                          }))
+                        }
                         style={{
                           marginLeft: "auto",
                           padding: "6px 10px",
@@ -631,7 +833,9 @@ export default function RunViewer() {
                         }}
                         title={showAllR ? "Show fewer iterations" : "Show all iterations"}
                       >
-                        {showAllR ? `Show first ${DEFAULT_RECORDS_LIMIT}` : `Show all (${records.length})`}
+                        {showAllR
+                          ? `Show first ${DEFAULT_RECORDS_LIMIT}`
+                          : `Show all (${records.length})`}
                       </button>
                     )}
                   </div>
@@ -639,24 +843,41 @@ export default function RunViewer() {
                   {records.length === 0 ? (
                     <div style={{ color: "#666" }}>No records available to plot.</div>
                   ) : (
-                    <div style={{ border: "1px solid #eee", borderRadius: 10, padding: 10 }}>
+                    <div
+                      style={{
+                        border: "1px solid #eee",
+                        borderRadius: 10,
+                        padding: 10,
+                      }}
+                    >
                       <Line
                         data={{
                           labels: recordsToShow.map((r) => r.k),
                           datasets: [
                             {
                               label: "|f(x)|",
-                              data: recordsToShow.map((r) => (r.residual == null ? null : r.residual)),
+                              data: recordsToShow.map((r) =>
+                                r.residual == null ? null : r.residual
+                              ),
                               tension: 0.2,
                             },
                           ],
                         }}
                         options={{
                           responsive: true,
-                          plugins: { legend: { display: true }, tooltip: { enabled: true } },
+                          plugins: {
+                            legend: { display: true },
+                            tooltip: { enabled: true },
+                          },
                           scales: {
                             x: { title: { display: true, text: "Iteration k" } },
-                            y: { title: { display: true, text: "Residual |f(x)|" }, beginAtZero: false },
+                            y: {
+                              title: {
+                                display: true,
+                                text: "Residual |f(x)|",
+                              },
+                              beginAtZero: false,
+                            },
                           },
                         }}
                       />
@@ -665,11 +886,23 @@ export default function RunViewer() {
                 </div>
 
                 <div style={{ marginTop: 12 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      marginBottom: 8,
+                    }}
+                  >
                     <div style={{ fontWeight: 700 }}>Event Timeline</div>
                     {events.length > DEFAULT_EVENTS_LIMIT && (
                       <button
-                        onClick={() => setShowAllEvents((prev) => ({ ...prev, [m]: !prev[m] }))}
+                        onClick={() =>
+                          setShowAllEvents((prev) => ({
+                            ...prev,
+                            [m]: !prev[m],
+                          }))
+                        }
                         style={{
                           marginLeft: "auto",
                           padding: "6px 10px",
@@ -681,7 +914,9 @@ export default function RunViewer() {
                           fontSize: 12,
                         }}
                       >
-                        {showAllE ? `Show first ${DEFAULT_EVENTS_LIMIT}` : `Show all (${events.length})`}
+                        {showAllE
+                          ? `Show first ${DEFAULT_EVENTS_LIMIT}`
+                          : `Show all (${events.length})`}
                       </button>
                     )}
                   </div>

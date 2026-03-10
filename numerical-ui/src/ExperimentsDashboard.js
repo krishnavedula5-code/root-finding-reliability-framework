@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 const API = "http://127.0.0.1:8000";
 
@@ -28,21 +29,135 @@ export default function ExperimentsDashboard() {
   const [bracketMax, setBracketMax] = useState(4);
 
   const [boundaryMethod, setBoundaryMethod] = useState("newton");
-  const [selectedMethods, setSelectedMethods] = useState(["newton"]);
+  const [selectedMethods, setSelectedMethods] = useState([
+    "newton",
+    "secant",
+    "bisection",
+    "hybrid",
+    "safeguarded_newton",
+  ]);
   const [nPoints, setNPoints] = useState(100);
   const [tol, setTol] = useState(1e-10);
   const [maxIter, setMaxIter] = useState(100);
+
+  const [showBoundaryAnalysis, setShowBoundaryAnalysis] = useState(true);
+  const [showBasinMap, setShowBasinMap] = useState(true);
+  const [showSolverComparison, setShowSolverComparison] = useState(true);
+  const [showPareto, setShowPareto] = useState(true);
+  const [showBasinComplexity, setShowBasinComplexity] = useState(true);
+  const [showBasinDistribution, setShowBasinDistribution] = useState(false);
+  const [showFailureRegions, setShowFailureRegions] = useState(false);
+  const [showHistograms, setShowHistograms] = useState(false);
+  const [showCcdfs, setShowCcdfs] = useState(false);
+  const [showArtifacts, setShowArtifacts] = useState(false);
 
   const pollRef = useRef(null);
 
   useEffect(() => {
     return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      stopPolling();
     };
   }, []);
+
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  function validateInputs() {
+    if (!Array.isArray(selectedMethods) || selectedMethods.length === 0) {
+      throw new Error("Select at least one method.");
+    }
+
+    const numericNPoints = Number(nPoints);
+    const numericTol = Number(tol);
+    const numericMaxIter = Number(maxIter);
+
+    if (!Number.isFinite(numericNPoints) || numericNPoints < 2) {
+      throw new Error("Points must be at least 2.");
+    }
+
+    if (!Number.isFinite(numericTol) || numericTol <= 0) {
+      throw new Error("Tolerance must be a positive number.");
+    }
+
+    if (!Number.isFinite(numericMaxIter) || numericMaxIter < 1) {
+      throw new Error("Max Iter must be at least 1.");
+    }
+
+    if (problemMode === "benchmark") {
+      if (!problemId) {
+        throw new Error("Select a benchmark problem.");
+      }
+      return;
+    }
+
+    if (!String(expr || "").trim()) {
+      throw new Error("Custom expression f(x) is required.");
+    }
+
+    const sMin = Number(scalarMin);
+    const sMax = Number(scalarMax);
+    const bMin = Number(bracketMin);
+    const bMax = Number(bracketMax);
+
+    if (!Number.isFinite(sMin) || !Number.isFinite(sMax) || sMin >= sMax) {
+      throw new Error("Scalar range is invalid. Ensure min < max.");
+    }
+
+    if (!Number.isFinite(bMin) || !Number.isFinite(bMax) || bMin >= bMax) {
+      throw new Error("Bracket search range is invalid. Ensure min < max.");
+    }
+  }
+
+  function buildPayload() {
+    const numericNPoints = Number(nPoints);
+    const numericTol = Number(tol);
+    const numericMaxIter = Number(maxIter);
+
+    if (problemMode === "custom") {
+      const sMin = Number(scalarMin);
+      const sMax = Number(scalarMax);
+      const bMin = Number(bracketMin);
+      const bMax = Number(bracketMax);
+
+      return {
+        problem_mode: "custom",
+        problem_id: null,
+        expr: String(expr || "").trim(),
+        dexpr: String(dexpr || "").trim(),
+        x_min: sMin,
+        x_max: sMax,
+        n_points: numericNPoints,
+        methods: selectedMethods,
+        tol: numericTol,
+        max_iter: numericMaxIter,
+        boundary_method: boundaryMethod,
+        scalar_range: {
+          x_min: sMin,
+          x_max: sMax,
+          n_points: numericNPoints,
+        },
+        bracket_search_range: {
+          x_min: bMin,
+          x_max: bMax,
+          n_points: numericNPoints,
+        },
+      };
+    }
+
+    return {
+      problem_mode: "benchmark",
+      problem_id: problemId,
+      methods: selectedMethods,
+      n_points: numericNPoints,
+      tol: numericTol,
+      max_iter: numericMaxIter,
+      boundary_method: boundaryMethod,
+    };
+  }
 
   async function runSweep() {
     try {
@@ -51,34 +166,11 @@ export default function ExperimentsDashboard() {
       setResult(null);
       setJobStatus(null);
 
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      stopPolling();
+      validateInputs();
 
-      const payload =
-        problemMode === "custom"
-          ? {
-              problem_mode: "custom",
-              expr,
-              dexpr,
-              scalar_range: [Number(scalarMin), Number(scalarMax)],
-              bracket_search_range: [Number(bracketMin), Number(bracketMax)],
-              methods: selectedMethods,
-              n_points: Number(nPoints),
-              tol: Number(tol),
-              max_iter: Number(maxIter),
-              boundary_method: boundaryMethod,
-            }
-          : {
-              problem_mode: "benchmark",
-              problem_id: problemId,
-              methods: selectedMethods,
-              n_points: Number(nPoints),
-              tol: Number(tol),
-              max_iter: Number(maxIter),
-              boundary_method: boundaryMethod,
-            };
+      const payload = buildPayload();
+      console.log("SWEEP PAYLOAD:", payload);
 
       const res = await fetch(`${API}/experiments/sweep`, {
         method: "POST",
@@ -89,10 +181,17 @@ export default function ExperimentsDashboard() {
       });
 
       if (!res.ok) {
-        throw new Error(`Failed to create experiment job: ${res.status}`);
+        const text = await res.text();
+        throw new Error(`Failed to create experiment job: ${res.status} ${text}`);
       }
 
       const data = await res.json();
+      console.log("SWEEP RESPONSE:", data);
+
+      if (!data?.job_id) {
+        throw new Error("Backend did not return a job_id.");
+      }
+
       setJobId(data.job_id);
       startPolling(data.job_id);
     } catch (err) {
@@ -102,38 +201,37 @@ export default function ExperimentsDashboard() {
   }
 
   function startPolling(id) {
+    stopPolling();
+
     pollRef.current = setInterval(async () => {
       try {
         const res = await fetch(`${API}/experiments/jobs/${id}`);
 
         if (!res.ok) {
-          throw new Error(`Polling failed: ${res.status}`);
+          const text = await res.text();
+          throw new Error(`Polling failed: ${res.status} ${text}`);
         }
 
         const data = await res.json();
+        console.log("JOB STATUS:", data);
         setJobStatus(data);
 
         if (data.status === "completed") {
-          setResult(data.result || null);
+          setResult(data.result || data);
           setRunning(false);
-          clearInterval(pollRef.current);
-          pollRef.current = null;
+          stopPolling();
+          return;
         }
 
-        if (data.status === "failed") {
-          setError(data.error || "Experiment failed");
+        if (data.status === "failed" || data.status === "error") {
+          setError(data.error || data.message || "Experiment failed");
           setRunning(false);
-          clearInterval(pollRef.current);
-          pollRef.current = null;
+          stopPolling();
         }
       } catch (err) {
         setError(err.message || "Polling error");
         setRunning(false);
-
-        if (pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
+        stopPolling();
       }
     }, 2000);
   }
@@ -200,9 +298,20 @@ export default function ExperimentsDashboard() {
     );
   }
 
-  const analyticsKey = result?.problem_id || problemId;
-  const basinMapUrl = toOutputUrl(result?.artifacts?.basin_map);
-  const analytics = result?.artifacts?.analytics?.[analyticsKey] || null;
+  const analyticsCollection = result?.artifacts?.analytics || {};
+  const analyticsKey =
+    result?.problem_id ||
+    (problemMode === "benchmark" ? problemId : "custom");
+  const analytics =
+    analyticsCollection?.[analyticsKey] ||
+    analyticsCollection?.custom ||
+    Object.values(analyticsCollection || {})[0] ||
+    null;
+
+  const basinMapUrl =
+    toOutputUrl(result?.artifacts?.basin_map) ||
+    toOutputUrl(analytics?.basin_map);
+
   const comparisonRows = analytics?.comparison_summary_data?.methods || [];
   const entropyRows = analytics?.basin_entropy_data?.methods || [];
 
@@ -212,12 +321,11 @@ export default function ExperimentsDashboard() {
   const failureRegionEntries = analytics?.failure_region
     ? Object.entries(analytics.failure_region)
     : [];
+
   const basinDistributionEntries = analytics?.basin_distribution
     ? Object.entries(analytics.basin_distribution)
     : [];
-  
-  // Detect approximate real roots from basin clustering
-  
+
   const detectedRoots = Array.from(
     new Set(
       (entropyRows || []).flatMap((row) =>
@@ -225,21 +333,43 @@ export default function ExperimentsDashboard() {
       )
     )
   ).sort((a, b) => Number(a) - Number(b));
-  
+
   const histogramEntries = analytics?.histogram
     ? Object.entries(analytics.histogram)
     : [];
+
   const ccdfEntries = analytics?.ccdf ? Object.entries(analytics.ccdf) : [];
 
-  const boundariesText =
-    Array.isArray(result?.boundaries) && result.boundaries.length > 0
-      ? result.boundaries.join(", ")
+  const boundaryRegions = Array.isArray(result?.boundaries)
+    ? result.boundaries
+    : [];
+  const rawBoundaries = Array.isArray(result?.raw_boundaries)
+    ? result.raw_boundaries
+    : [];
+  const boundarySummary = result?.boundary_summary || null;
+  const boundaryClusterTol = result?.boundary_cluster_tol;
+
+  const boundarySummaryText = boundarySummary
+    ? `${boundarySummary.clustered_count ?? boundaryRegions.length} regions (${boundarySummary.raw_count ?? rawBoundaries.length} raw)`
+    : boundaryRegions.length > 0
+      ? `${boundaryRegions.length} regions`
       : "None";
 
   const clusterTol = analytics?.basin_entropy_data?.cluster_tol;
 
   return (
     <div style={styles.page}>
+      <div style={styles.breadcrumbRow}>
+        <Link to="/" style={styles.navButton}>
+          ← Home
+        </Link>
+        <Link to="/experiments" style={styles.navButtonSecondary}>
+          Experiments
+        </Link>
+        <Link to="/experiment-jobs" style={styles.navButtonSecondary}>
+          Experiment Jobs
+        </Link>
+      </div>
       <div style={styles.headerBlock}>
         <h1 style={styles.pageTitle}>Experiment Dashboard</h1>
         <p style={styles.pageSubtitle}>
@@ -293,7 +423,7 @@ export default function ExperimentsDashboard() {
               </div>
 
               <div style={{ gridColumn: "1 / -1" }}>
-                <label style={styles.label}>f'(x)</label>
+                <label style={styles.label}>f&apos;(x)</label>
                 <input
                   value={dexpr}
                   onChange={(e) => setDexpr(e.target.value)}
@@ -381,6 +511,7 @@ export default function ExperimentsDashboard() {
             <label style={styles.label}>Tolerance</label>
             <input
               type="number"
+              step="any"
               value={tol}
               onChange={(e) => setTol(e.target.value)}
               disabled={running}
@@ -486,8 +617,14 @@ export default function ExperimentsDashboard() {
           <h2 style={styles.resultsTitle}>Experiment Results</h2>
 
           <div style={styles.summaryGrid}>
-            <SummaryCard label="Problem Mode" value={result.problem_mode || problemMode} />
-            <SummaryCard label="Problem" value={result.problem_id || analyticsKey} />
+            <SummaryCard
+              label="Problem Mode"
+              value={result.problem_mode || problemMode}
+            />
+            <SummaryCard
+              label="Problem"
+              value={result.problem_id || analyticsKey}
+            />
             <SummaryCard label="Boundary Method" value={boundaryMethod} />
             <SummaryCard label="Points" value={String(nPoints)} />
             <SummaryCard label="Methods" value={selectedMethods.join(", ")} />
@@ -495,10 +632,9 @@ export default function ExperimentsDashboard() {
               label="Sweep Folder"
               value={result.latest_sweep_dir || "-"}
             />
-            <SummaryCard label="Boundary Detected" value={boundariesText} />
+            <SummaryCard label="Boundary Regions" value={boundarySummaryText} />
           </div>
 
-                    {/* Detected Roots */}
           <div style={styles.section}>
             <div style={styles.card}>
               <h3 style={styles.sectionTitle}>Detected Real Roots</h3>
@@ -515,256 +651,354 @@ export default function ExperimentsDashboard() {
             </div>
           </div>
 
-          <div style={styles.section}>
-            <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>Basin Map</h3>
-              {basinMapUrl ? (
-                <img
-                  src={basinMapUrl}
-                  alt="Basin map"
-                  style={styles.basinImage}
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
-              ) : (
-                <p style={styles.mutedText}>No basin map available.</p>
-              )}
-            </div>
-          </div>
-
-          <div style={styles.section}>
-            <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>Solver Comparison Summary</h3>
-              {comparisonRows.length > 0 ? (
-                <div style={styles.tableWrap}>
-                  <table style={styles.table}>
-                    <thead>
-                      <tr>
-                        <th style={styles.th}>Method</th>
-                        <th style={styles.th}>Success Rate</th>
-                        <th style={styles.th}>Mean Iter</th>
-                        <th style={styles.th}>Median Iter</th>
-                        <th style={styles.th}>P95 Iter</th>
-                        <th style={styles.th}>Max Iter</th>
-                        <th style={styles.th}>Failure Count</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {comparisonRows.map((row) => (
-                        <tr key={row.method}>
-                          <td style={styles.td}>{row.method}</td>
-                          <td style={styles.td}>{formatPercent(row.success_rate)}</td>
-                          <td style={styles.td}>{formatMean(row.mean_iter)}</td>
-                          <td style={styles.td}>{formatNumber(row.median_iter)}</td>
-                          <td style={styles.td}>{formatNumber(row.p95_iter)}</td>
-                          <td style={styles.td}>{formatNumber(row.max_iter)}</td>
-                          <td style={styles.td}>{formatNumber(row.failure_count)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+          <SectionCard
+            title="Boundary Analysis"
+            isOpen={showBoundaryAnalysis}
+            onToggle={() => setShowBoundaryAnalysis((v) => !v)}
+          >
+            {boundarySummary ? (
+              <>
+                <div style={styles.summaryGrid}>
+                  <SummaryCard
+                    label="Clustered Regions"
+                    value={String(boundarySummary.clustered_count ?? "-")}
+                  />
+                  <SummaryCard
+                    label="Raw Boundary Points"
+                    value={String(boundarySummary.raw_count ?? "-")}
+                  />
+                  <SummaryCard
+                    label="Leftmost Boundary"
+                    value={formatNumber(boundarySummary.leftmost)}
+                  />
+                  <SummaryCard
+                    label="Rightmost Boundary"
+                    value={formatNumber(boundarySummary.rightmost)}
+                  />
+                  <SummaryCard
+                    label="Median Spacing"
+                    value={formatNumber(boundarySummary.median_spacing)}
+                  />
+                  <SummaryCard
+                    label="Cluster Tolerance"
+                    value={formatNumber(boundaryClusterTol)}
+                  />
                 </div>
-              ) : (
-                <p style={styles.mutedText}>No comparison summary available.</p>
-              )}
-            </div>
-          </div>
 
-          <div style={styles.section}>
-            <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>Pareto Tradeoff Analysis</h3>
-              {paretoMeanUrl || paretoMedianUrl ? (
-                <div style={styles.plotGrid}>
-                  {paretoMeanUrl && (
-                    <div style={styles.plotCard}>
-                      <div style={styles.plotCardTitle}>
-                        Mean Iterations vs Failure Rate
-                      </div>
-                      <img
-                        src={paretoMeanUrl}
-                        alt="Pareto mean iterations vs failure rate"
-                        style={styles.plotImage}
-                      />
+                <div style={{ marginTop: 18 }}>
+                  {boundaryRegions.length > 0 ? (
+                    <div style={styles.tableWrap}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={styles.th}>Region</th>
+                            <th style={styles.th}>Center</th>
+                            <th style={styles.th}>Start</th>
+                            <th style={styles.th}>End</th>
+                            <th style={styles.th}>Width</th>
+                            <th style={styles.th}>Raw Points</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {boundaryRegions.map((region) => (
+                            <tr key={`boundary-region-${region.region_id}`}>
+                              <td style={styles.td}>{region.region_id}</td>
+                              <td style={styles.td}>{formatNumber(region.center)}</td>
+                              <td style={styles.td}>{formatNumber(region.start)}</td>
+                              <td style={styles.td}>{formatNumber(region.end)}</td>
+                              <td style={styles.td}>{formatNumber(region.width)}</td>
+                              <td style={styles.td}>{formatNumber(region.count)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  )}
-
-                  {paretoMedianUrl && (
-                    <div style={styles.plotCard}>
-                      <div style={styles.plotCardTitle}>
-                        Median Iterations vs Failure Rate
-                      </div>
-                      <img
-                        src={paretoMedianUrl}
-                        alt="Pareto median iterations vs failure rate"
-                        style={styles.plotImage}
-                      />
-                    </div>
+                  ) : (
+                    <p style={styles.mutedText}>
+                      No clustered boundary regions available.
+                    </p>
                   )}
                 </div>
-              ) : (
-                <p style={styles.mutedText}>No Pareto artifacts available.</p>
-              )}
-            </div>
-          </div>
+              </>
+            ) : (
+              <p style={styles.mutedText}>No boundary summary available.</p>
+            )}
+          </SectionCard>
 
-          <div style={styles.section}>
-            <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>Basin Complexity Metrics</h3>
+          <SectionCard
+            title="Basin Map"
+            isOpen={showBasinMap}
+            onToggle={() => setShowBasinMap((v) => !v)}
+          >
+            {basinMapUrl ? (
+              <img
+                src={basinMapUrl}
+                alt="Basin map"
+                style={styles.basinImage}
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+            ) : (
+              <p style={styles.mutedText}>No basin map available.</p>
+            )}
+          </SectionCard>
 
-              {clusterTol !== undefined && clusterTol !== null && (
-                <p style={styles.metaText}>
-                  <b>Cluster tolerance:</b> {formatNumber(clusterTol)} (based on sweep resolution)
-                </p>
-              )}
-
-              {entropyRows.length > 0 ? (
-                <div style={styles.tableWrap}>
-                  <table style={styles.table}>
-                    <thead>
-                      <tr>
-                        <th style={styles.th}>Method</th>
-                        <th style={styles.th}>Entropy</th>
-                        <th style={styles.th}>Basins</th>
-                        <th style={styles.th}>Converged Runs</th>
-                        <th style={styles.th}>Cluster Tol</th>
+          <SectionCard
+            title="Solver Comparison Summary"
+            isOpen={showSolverComparison}
+            onToggle={() => setShowSolverComparison((v) => !v)}
+          >
+            {comparisonRows.length > 0 ? (
+              <div style={styles.tableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Method</th>
+                      <th style={styles.th}>Success Rate</th>
+                      <th style={styles.th}>Mean Iter</th>
+                      <th style={styles.th}>Median Iter</th>
+                      <th style={styles.th}>P95 Iter</th>
+                      <th style={styles.th}>Max Iter</th>
+                      <th style={styles.th}>Failure Count</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comparisonRows.map((row) => (
+                      <tr key={row.method}>
+                        <td style={styles.td}>{row.method}</td>
+                        <td style={styles.td}>{formatPercent(row.success_rate)}</td>
+                        <td style={styles.td}>{formatMean(row.mean_iter)}</td>
+                        <td style={styles.td}>{formatNumber(row.median_iter)}</td>
+                        <td style={styles.td}>{formatNumber(row.p95_iter)}</td>
+                        <td style={styles.td}>{formatNumber(row.max_iter)}</td>
+                        <td style={styles.td}>{formatNumber(row.failure_count)}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {entropyRows.map((row) => (
-                        <tr key={`entropy-${row.method}`}>
-                          <td style={styles.td}>{row.method}</td>
-                          <td style={styles.td}>{formatEntropy(row.entropy)}</td>
-                          <td style={styles.td}>{formatNumber(row.num_basins)}</td>
-                          <td style={styles.td}>{formatNumber(row.total_converged)}</td>
-                          <td style={styles.td}>{formatNumber(row.cluster_tol)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p style={styles.mutedText}>No basin entropy metrics available.</p>
-              )}
-            </div>
-          </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p style={styles.mutedText}>No comparison summary available.</p>
+            )}
+          </SectionCard>
 
-          <div style={styles.section}>
-            <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>Basin Distribution Plots</h3>
-
-              {basinDistributionEntries.length > 0 ? (
-                <div style={styles.plotGrid}>
-                  {basinDistributionEntries.map(([methodName, path]) => (
-                    <div key={`basin-${methodName}`} style={styles.plotCard}>
-                      <div style={styles.plotCardTitle}>{methodName}</div>
-                      <img
-                        src={toOutputUrl(path)}
-                        alt={`Basin distribution for ${methodName}`}
-                        style={styles.plotImage}
-                      />
+          <SectionCard
+            title="Pareto Tradeoff Analysis"
+            isOpen={showPareto}
+            onToggle={() => setShowPareto((v) => !v)}
+          >
+            {paretoMeanUrl || paretoMedianUrl ? (
+              <div style={styles.plotGrid}>
+                {paretoMeanUrl && (
+                  <div style={styles.plotCard}>
+                    <div style={styles.plotCardTitle}>
+                      Mean Iterations vs Failure Rate
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={styles.mutedText}>No basin distribution artifacts available.</p>
-              )}
-            </div>
-          </div>
+                    <img
+                      src={paretoMeanUrl}
+                      alt="Pareto mean iterations vs failure rate"
+                      style={styles.plotImage}
+                    />
+                  </div>
+                )}
 
-          <div style={styles.section}>
-            <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>Failure Region Plots</h3>
-              {failureRegionEntries.length > 0 ? (
-                <div style={styles.plotGrid}>
-                  {failureRegionEntries.map(([methodName, path]) => (
-                    <div key={`fail-${methodName}`} style={styles.plotCard}>
-                      <div style={styles.plotCardTitle}>{methodName}</div>
-                      <img
-                        src={toOutputUrl(path)}
-                        alt={`Failure region for ${methodName}`}
-                        style={styles.plotImage}
-                      />
+                {paretoMedianUrl && (
+                  <div style={styles.plotCard}>
+                    <div style={styles.plotCardTitle}>
+                      Median Iterations vs Failure Rate
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={styles.mutedText}>No failure region artifacts available.</p>
-              )}
-            </div>
-          </div>
-
-          <div style={styles.section}>
-            <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>Iteration Histograms</h3>
-              {histogramEntries.length > 0 ? (
-                <div style={styles.plotGrid}>
-                  {histogramEntries.map(([methodName, path]) => (
-                    <div key={`hist-${methodName}`} style={styles.plotCard}>
-                      <div style={styles.plotCardTitle}>{methodName}</div>
-                      <img
-                        src={toOutputUrl(path)}
-                        alt={`Iteration histogram for ${methodName}`}
-                        style={styles.plotImage}
-                      />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={styles.mutedText}>No histogram artifacts available.</p>
-              )}
-            </div>
-          </div>
-
-          <div style={styles.section}>
-            <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>Iteration CCDFs</h3>
-              {ccdfEntries.length > 0 ? (
-                <div style={styles.plotGrid}>
-                  {ccdfEntries.map(([methodName, path]) => (
-                    <div key={`ccdf-${methodName}`} style={styles.plotCard}>
-                      <div style={styles.plotCardTitle}>{methodName}</div>
-                      <img
-                        src={toOutputUrl(path)}
-                        alt={`Iteration CCDF for ${methodName}`}
-                        style={styles.plotImage}
-                      />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={styles.mutedText}>No CCDF artifacts available.</p>
-              )}
-            </div>
-          </div>
-
-          <div style={styles.section}>
-            <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>Artifacts</h3>
-              <div style={styles.artifactsGrid}>
-                {renderArtifactLink("records.csv", result.records_csv)}
-                {renderArtifactLink("records.json", result.records_json)}
-                {renderArtifactLink("summary.json", result.summary_json)}
-                {renderArtifactLink("metadata.json", result.metadata_json)}
-                {renderArtifactLink("comparison_summary.json", analytics?.comparison_summary)}
-                {renderArtifactLink("basin_entropy.json", analytics?.basin_entropy)}
-                {paretoMeanUrl &&
-                  renderArtifactLink("pareto_mean_vs_failure.png", analytics?.pareto?.mean_vs_failure)}
-                {paretoMedianUrl &&
-                  renderArtifactLink("pareto_median_vs_failure.png", analytics?.pareto?.median_vs_failure)}
-                {basinMapUrl && (
-                  <a
-                    href={basinMapUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={styles.artifactLink}
-                  >
-                    basin_map.png
-                  </a>
+                    <img
+                      src={paretoMedianUrl}
+                      alt="Pareto median iterations vs failure rate"
+                      style={styles.plotImage}
+                    />
+                  </div>
                 )}
               </div>
+            ) : (
+              <p style={styles.mutedText}>No Pareto artifacts available.</p>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Basin Complexity Metrics"
+            isOpen={showBasinComplexity}
+            onToggle={() => setShowBasinComplexity((v) => !v)}
+          >
+            {clusterTol !== undefined && clusterTol !== null && (
+              <p style={styles.metaText}>
+                <b>Cluster tolerance:</b> {formatNumber(clusterTol)} (based on
+                sweep resolution)
+              </p>
+            )}
+
+            {entropyRows.length > 0 ? (
+              <div style={styles.tableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Method</th>
+                      <th style={styles.th}>Entropy</th>
+                      <th style={styles.th}>Basins</th>
+                      <th style={styles.th}>Converged Runs</th>
+                      <th style={styles.th}>Cluster Tol</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entropyRows.map((row) => (
+                      <tr key={`entropy-${row.method}`}>
+                        <td style={styles.td}>{row.method}</td>
+                        <td style={styles.td}>{formatEntropy(row.entropy)}</td>
+                        <td style={styles.td}>{formatNumber(row.num_basins)}</td>
+                        <td style={styles.td}>{formatNumber(row.total_converged)}</td>
+                        <td style={styles.td}>{formatNumber(row.cluster_tol)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p style={styles.mutedText}>No basin entropy metrics available.</p>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Basin Distribution Plots"
+            isOpen={showBasinDistribution}
+            onToggle={() => setShowBasinDistribution((v) => !v)}
+          >
+            {basinDistributionEntries.length > 0 ? (
+              <div style={styles.plotGrid}>
+                {basinDistributionEntries.map(([methodName, path]) => (
+                  <div key={`basin-${methodName}`} style={styles.plotCard}>
+                    <div style={styles.plotCardTitle}>{methodName}</div>
+                    <img
+                      src={toOutputUrl(path)}
+                      alt={`Basin distribution for ${methodName}`}
+                      style={styles.plotImage}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={styles.mutedText}>
+                No basin distribution artifacts available.
+              </p>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Failure Region Plots"
+            isOpen={showFailureRegions}
+            onToggle={() => setShowFailureRegions((v) => !v)}
+          >
+            {failureRegionEntries.length > 0 ? (
+              <div style={styles.plotGrid}>
+                {failureRegionEntries.map(([methodName, path]) => (
+                  <div key={`fail-${methodName}`} style={styles.plotCard}>
+                    <div style={styles.plotCardTitle}>{methodName}</div>
+                    <img
+                      src={toOutputUrl(path)}
+                      alt={`Failure region for ${methodName}`}
+                      style={styles.plotImage}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={styles.mutedText}>
+                No failure region artifacts available.
+              </p>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Iteration Histograms"
+            isOpen={showHistograms}
+            onToggle={() => setShowHistograms((v) => !v)}
+          >
+            {histogramEntries.length > 0 ? (
+              <div style={styles.plotGrid}>
+                {histogramEntries.map(([methodName, path]) => (
+                  <div key={`hist-${methodName}`} style={styles.plotCard}>
+                    <div style={styles.plotCardTitle}>{methodName}</div>
+                    <img
+                      src={toOutputUrl(path)}
+                      alt={`Iteration histogram for ${methodName}`}
+                      style={styles.plotImage}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={styles.mutedText}>No histogram artifacts available.</p>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Iteration CCDFs"
+            isOpen={showCcdfs}
+            onToggle={() => setShowCcdfs((v) => !v)}
+          >
+            {ccdfEntries.length > 0 ? (
+              <div style={styles.plotGrid}>
+                {ccdfEntries.map(([methodName, path]) => (
+                  <div key={`ccdf-${methodName}`} style={styles.plotCard}>
+                    <div style={styles.plotCardTitle}>{methodName}</div>
+                    <img
+                      src={toOutputUrl(path)}
+                      alt={`Iteration CCDF for ${methodName}`}
+                      style={styles.plotImage}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={styles.mutedText}>No CCDF artifacts available.</p>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Artifacts"
+            isOpen={showArtifacts}
+            onToggle={() => setShowArtifacts((v) => !v)}
+          >
+            <div style={styles.artifactsGrid}>
+              {renderArtifactLink("records.csv", result.records_csv)}
+              {renderArtifactLink("records.json", result.records_json)}
+              {renderArtifactLink("summary.json", result.summary_json)}
+              {renderArtifactLink("metadata.json", result.metadata_json)}
+              {renderArtifactLink(
+                "comparison_summary.json",
+                analytics?.comparison_summary
+              )}
+              {renderArtifactLink(
+                "basin_entropy.json",
+                analytics?.basin_entropy
+              )}
+              {paretoMeanUrl &&
+                renderArtifactLink(
+                  "pareto_mean_vs_failure.png",
+                  analytics?.pareto?.mean_vs_failure
+                )}
+              {paretoMedianUrl &&
+                renderArtifactLink(
+                  "pareto_median_vs_failure.png",
+                  analytics?.pareto?.median_vs_failure
+                )}
+              {basinMapUrl && (
+                <a
+                  href={basinMapUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={styles.artifactLink}
+                >
+                  basin_map.png
+                </a>
+              )}
             </div>
-          </div>
+          </SectionCard>
         </div>
       )}
     </div>
@@ -780,15 +1014,58 @@ function SummaryCard({ label, value }) {
   );
 }
 
+function SectionCard({ title, isOpen, onToggle, children }) {
+  return (
+    <div style={styles.section}>
+      <div style={styles.card}>
+        <button type="button" onClick={onToggle} style={styles.sectionToggle}>
+          <span>{title}</span>
+          <span>{isOpen ? "▾" : "▸"}</span>
+        </button>
+        {isOpen && <div style={{ marginTop: 12 }}>{children}</div>}
+      </div>
+    </div>
+  );
+}
+
 const styles = {
   page: {
-    maxWidth: 1240,
+    maxWidth: 1500,
     margin: "0 auto",
     padding: "32px 20px 60px",
     fontFamily: "Arial, sans-serif",
     color: "#111827",
     background: "#f8fafc",
     minHeight: "100vh",
+  },
+
+  breadcrumbRow: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    marginBottom: 18,
+  },
+
+  navButton: {
+    display: "inline-block",
+    padding: "10px 14px",
+    borderRadius: 10,
+    textDecoration: "none",
+    fontWeight: 700,
+    background: "#2563eb",
+    color: "#ffffff",
+    border: "1px solid #2563eb",
+  },
+
+  navButtonSecondary: {
+    display: "inline-block",
+    padding: "10px 14px",
+    borderRadius: 10,
+    textDecoration: "none",
+    fontWeight: 700,
+    background: "#ffffff",
+    color: "#374151",
+    border: "1px solid #d1d5db",
   },
 
   headerBlock: {
@@ -825,6 +1102,22 @@ const styles = {
     marginBottom: 16,
     fontSize: 20,
     fontWeight: 700,
+  },
+
+  sectionToggle: {
+    width: "100%",
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    margin: 0,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    fontSize: 20,
+    fontWeight: 700,
+    color: "#111827",
+    cursor: "pointer",
+    textAlign: "left",
   },
 
   metaText: {
@@ -1024,7 +1317,7 @@ const styles = {
 
   plotGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))",
     gap: 18,
   },
 

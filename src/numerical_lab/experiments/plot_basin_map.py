@@ -1,12 +1,16 @@
 from __future__ import annotations
+
 import matplotlib
 matplotlib.use("Agg")
+
 import csv
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
+
+from numerical_lab.experiments.detect_basin_boundaries import detect_boundaries
 
 
 def find_latest_sweep(base: str = "outputs/sweeps") -> Path:
@@ -23,8 +27,10 @@ def load_rows(path: Path) -> List[Dict[str, str]]:
         return list(csv.DictReader(f))
 
 
-def parse_float(value: str, default: float = 0.0) -> float:
+def parse_float(value: str | None, default: Optional[float] = None) -> Optional[float]:
     try:
+        if value is None or str(value).strip() == "":
+            return default
         return float(value)
     except Exception:
         return default
@@ -63,17 +69,17 @@ def build_label_mapping(labels: List[str]) -> Tuple[Dict[str, int], List[str]]:
     """
     Put normal root labels first, FAIL last.
     Example:
-        ['root_0', 'root_1', 'FAIL'] -> {'root_0':0, 'root_1':1, 'FAIL':2}
+        ['0', '1', 'FAIL'] -> {'0':0, '1':1, 'FAIL':2}
     """
     unique = sorted(set(labels), key=lambda s: (s == "FAIL", s))
     mapping = {label: i for i, label in enumerate(unique)}
     return mapping, unique
 
 
-def make_cmap(n: int) -> Tuple[ListedColormap, BoundaryNorm]:
+def make_cmap(n: int, has_fail: bool) -> Tuple[ListedColormap, BoundaryNorm]:
     """
     Simple discrete colormap.
-    Last color reserved for FAIL if present.
+    If FAIL is present, reserve last color for FAIL.
     """
     base_colors = [
         "#1f77b4",  # blue
@@ -83,18 +89,123 @@ def make_cmap(n: int) -> Tuple[ListedColormap, BoundaryNorm]:
         "#9467bd",  # purple
         "#8c564b",  # brown
         "#e377c2",  # pink
-        "#7f7f7f",  # gray
-        "#bcbd22",  # olive
         "#17becf",  # cyan
+        "#bcbd22",  # olive
+        "#7f7f7f",  # gray
     ]
 
-    colors = []
-    for i in range(n):
-        colors.append(base_colors[i % len(base_colors)])
+    colors: List[str] = []
+
+    if has_fail and n >= 1:
+        root_count = n - 1
+        for i in range(root_count):
+            colors.append(base_colors[i % len(base_colors)])
+        colors.append("#d3d3d3")  # FAIL in light gray
+    else:
+        for i in range(n):
+            colors.append(base_colors[i % len(base_colors)])
 
     cmap = ListedColormap(colors)
     norm = BoundaryNorm(boundaries=list(range(n + 1)), ncolors=n)
     return cmap, norm
+
+
+def infer_root_centers(rows: List[Dict[str, str]]) -> Dict[str, float]:
+    """
+    Infer representative root value for each root_id from converged rows.
+    Uses mean(root) per root_id.
+    """
+    grouped: Dict[str, List[float]] = {}
+
+    for r in rows:
+        status = (r.get("status") or "").strip().lower()
+        root_id = (r.get("root_id") or "").strip()
+        root = parse_float(r.get("root"))
+
+        if status == "converged" and root_id and root is not None:
+            grouped.setdefault(root_id, []).append(root)
+
+    centers: Dict[str, float] = {}
+    for rid, vals in grouped.items():
+        if vals:
+            centers[rid] = sum(vals) / len(vals)
+
+    return centers
+
+
+def build_display_labels(
+    ordered_labels: List[str],
+    root_centers: Dict[str, float]
+) -> List[str]:
+    display_labels: List[str] = []
+    for label in ordered_labels:
+        if label == "FAIL":
+            display_labels.append("fail")
+        elif label in root_centers:
+            display_labels.append(f"root {label} ≈ {root_centers[label]:.4f}")
+        else:
+            display_labels.append(f"root {label}")
+    return display_labels
+
+
+def add_root_overlays(ax, root_centers: Dict[str, float]) -> None:
+    """
+    Draw detected root locations as dashed vertical lines.
+    """
+    if not root_centers:
+        return
+
+    for rid, x_root in sorted(root_centers.items(), key=lambda kv: kv[1]):
+        ax.axvline(
+            x=x_root,
+            linestyle="--",
+            linewidth=1.4,
+            color="black",
+            alpha=0.85,
+            zorder=3,
+        )
+
+        ax.text(
+            x_root,
+            1.08,
+            f"r{rid} ≈ {x_root:.4f}",
+            rotation=90,
+            ha="center",
+            va="top",
+            fontsize=8,
+            color="black",
+            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75),
+            clip_on=True,
+            zorder=4,
+        )
+
+
+def add_boundary_overlays(ax, rows: List[Dict[str, str]]) -> None:
+    """
+    Draw clustered boundary centers as thin red vertical lines.
+    """
+    try:
+        boundary_info = detect_boundaries(rows, return_mode="full")
+        clustered = boundary_info.get("clustered", [])
+    except Exception:
+        clustered = []
+
+    if not clustered:
+        return
+
+    for region in clustered:
+        center = parse_float(region.get("center"))
+        if center is None:
+            continue
+
+        ax.axvline(
+            x=center,
+            linestyle="-",
+            linewidth=0.9,
+            color="red",
+            alpha=0.75,
+            zorder=2,
+        )
 
 
 def plot_basin_map(
@@ -108,9 +219,14 @@ def plot_basin_map(
 
     processed = []
     for r in rows:
-        x0 = parse_float(r.get("x0", "0"))
+        x0 = parse_float(r.get("x0"), None)
+        if x0 is None:
+            continue
         basin_label = normalize_root_id(r)
         processed.append((x0, basin_label))
+
+    if not processed:
+        raise ValueError(f"No valid x0 rows found for problem={problem_id}, method={method}")
 
     processed.sort(key=lambda t: t[0])
 
@@ -120,12 +236,15 @@ def plot_basin_map(
     label_to_int, ordered_labels = build_label_mapping(labels)
     values = [label_to_int[label] for label in labels]
 
-    cmap, norm = make_cmap(len(ordered_labels))
+    has_fail = "FAIL" in ordered_labels
+    cmap, norm = make_cmap(len(ordered_labels), has_fail=has_fail)
 
-    # 1D strip as an image with height 1
+    root_centers = infer_root_centers(rows)
+    display_labels = build_display_labels(ordered_labels, root_centers)
+
     data = [values]
 
-    fig, ax = plt.subplots(figsize=(12, 2.2))
+    fig, ax = plt.subplots(figsize=(14, 3.4))
     im = ax.imshow(
         data,
         aspect="auto",
@@ -135,27 +254,25 @@ def plot_basin_map(
         interpolation="nearest",
     )
 
+    ax.set_ylim(0, 1.15)
+
+    add_boundary_overlays(ax, rows)
+    add_root_overlays(ax, root_centers)
+
     ax.set_yticks([])
+    ax.set_ylabel("")
     ax.set_xlabel(r"Initial guess $x_0$")
     ax.set_title(f"Basin map — {problem_id} — {method}")
-    
-    # colorbar with readable labels
-    cbar = plt.colorbar(im, ax=ax, ticks=list(range(len(ordered_labels))))
-    label_map = {
-        "0": "root ≈ -2",
-        "1": "root ≈ 1",
-        "FAIL": "fail"
-    }
 
-    display_labels = [label_map.get(l, l) for l in ordered_labels]
+    cbar = plt.colorbar(im, ax=ax, ticks=list(range(len(ordered_labels))))
     cbar.ax.set_yticklabels(display_labels)
-    cbar.set_label("Basin label")
+    cbar.set_label("Attractor / outcome")
 
     plt.tight_layout()
 
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"basin_map_{problem_id}_{method}.png"
-    plt.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.savefig(out_path, dpi=220, bbox_inches="tight")
     plt.close(fig)
     return out_path
 
