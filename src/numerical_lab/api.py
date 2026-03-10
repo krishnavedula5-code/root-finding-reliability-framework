@@ -39,7 +39,7 @@ APP_VERSION = os.environ.get("NUM_LAB_APP_VERSION", "dev")
 
 allowed_origins_env = os.environ.get(
     "NUM_LAB_CORS_ORIGINS",
-    "http://localhost:3000,https://numerical-ui-deploy-krishnavedula5-codes-projects.vercel.app",
+    "http://localhost:3000,https://root-finding-reliability-framework.vercel.app,https://numerical-ui-deploy-krishnavedula5-codes-projects.vercel.app",
 )
 
 allowed_origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
