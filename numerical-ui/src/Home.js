@@ -1,4 +1,3 @@
-// src/Home.js
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API } from "./api";
@@ -18,6 +17,8 @@ import { computeBadges } from "./diagnosticsBadges";
 import { computeHint } from "./diagnosticsHints";
 import DiagnosticsLegend from "./DiagnosticsLegend";
 import EventTimeline from "./EventTimeline";
+import useBackendWarmup from "./useBackendWarmup";
+import BackendWarmupPanel from "./BackendWarmupPanel";
 
 const BENCHMARKS = [
   {
@@ -54,10 +55,15 @@ const BENCHMARKS = [
   },
 ];
 
-ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
+ChartJS.register(
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend
+);
 
-// In dev (localhost:3000), CRA proxy forwards /compare, /runs -> http://localhost:8000
-// In prod (served by FastAPI), same-origin also works.
 const API_URL = API;
 
 const METHOD_META = {
@@ -65,6 +71,10 @@ const METHOD_META = {
   secant: { label: "Secant Method", subtitle: "Superlinear Convergence" },
   bisection: { label: "Bisection Method", subtitle: "Linear but Guaranteed" },
   hybrid: { label: "Hybrid Method", subtitle: "Robust + Fast" },
+  safeguarded_newton: {
+    label: "Safeguarded Newton",
+    subtitle: "Bracketed Newton Stability",
+  },
 };
 
 const DEFAULT_RECORDS_LIMIT = 20;
@@ -118,7 +128,6 @@ function fmtMaybe(num, kind) {
   return String(n);
 }
 
-// Send null when empty
 function numOrNull(v) {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
@@ -129,6 +138,15 @@ function numOrNull(v) {
 
 export default function Home() {
   const navigate = useNavigate();
+
+  const {
+    backendStatus,
+    statusMessage,
+    isPreparingRun,
+    wakeBackendOnly,
+    runWithWarmup,
+  } = useBackendWarmup({ autoPoll: true, pollIntervalMs: 25000 });
+
   const [selectedScenarioId, setSelectedScenarioId] = useState(null);
   const [benchmarkId, setBenchmarkId] = useState("");
   const [expr, setExpr] = useState("x**3 - x - 2");
@@ -138,16 +156,12 @@ export default function Home() {
   const [a, setA] = useState(1);
   const [b, setB] = useState(2);
 
-  // optional inputs; if blank → backend defaults
   const [x0, setX0] = useState("");
   const [x1, setX1] = useState("");
 
   const [tol, setTol] = useState(1e-10);
   const [maxIter, setMaxIter] = useState(100);
 
-  // ---------------------------------------------------------
-  // Demo Scenarios
-  // ---------------------------------------------------------
   const DEMO_SCENARIOS = [
     {
       id: "ideal_newton",
@@ -249,7 +263,7 @@ export default function Home() {
     setBenchmarkId(id);
     setSelectedScenarioId(null);
 
-    const selected = BENCHMARKS.find((b) => b.id === id);
+    const selected = BENCHMARKS.find((bmk) => bmk.id === id);
     if (!selected) return;
 
     setExpr(selected.expr);
@@ -375,18 +389,29 @@ export default function Home() {
     setData(null);
 
     try {
-      const res = await fetch(`${API_URL}/compare`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload()),
-      });
+      const payload = buildPayload();
 
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || `HTTP ${res.status}`);
-      }
+      const json = await runWithWarmup(
+        async () => {
+          const res = await fetch(`${API_URL}/compare`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
 
-      const json = await res.json();
+          if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(txt || `HTTP ${res.status}`);
+          }
+
+          return res.json();
+        },
+        {
+          startMessage: "Compute engine ready. Running solver comparison...",
+          doneMessage: "Comparison completed.",
+        }
+      );
+
       setData(json);
     } catch (e) {
       setErr(e.message || String(e));
@@ -400,18 +425,29 @@ export default function Home() {
     setErr("");
 
     try {
-      const res = await fetch(`${API_URL}/runs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload()),
-      });
+      const payload = buildPayload();
 
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || `HTTP ${res.status}`);
-      }
+      const json = await runWithWarmup(
+        async () => {
+          const res = await fetch(`${API_URL}/runs`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
 
-      const json = await res.json();
+          if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(txt || `HTTP ${res.status}`);
+          }
+
+          return res.json();
+        },
+        {
+          startMessage: "Compute engine ready. Creating shareable run...",
+          doneMessage: "Share link created.",
+        }
+      );
+
       navigate(json.url_path || `/run/${json.run_id}`);
     } catch (e) {
       setErr(e.message || String(e));
@@ -420,53 +456,52 @@ export default function Home() {
     }
   }
 
-  const problemCard =
-    data ? (
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, marginBottom: 16 }}>
-        <div style={{ fontWeight: 800, marginBottom: 8 }}>Problem Definition</div>
+  const problemCard = data ? (
+    <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, marginBottom: 16 }}>
+      <div style={{ fontWeight: 800, marginBottom: 8 }}>Problem Definition</div>
 
-        <div
-          style={{
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-            fontSize: 13,
-          }}
-        >
-          f(x) = {expr}
-          <br />
-          {numericalDerivative ? "f'(x) = (numerical)" : `f'(x) = ${dexpr || "(none)"}`}
-          <br />
-          bracket = [{a}, {b}] • guesses: x0={x0 === "" ? "(default)" : x0}, x1={x1 === "" ? "(default)" : x1}
-          <br />
-          tol = {tol} • max_iter = {maxIter}
-        </div>
-
-        {domainMathHint && (
-          <div style={{ marginTop: 8, fontSize: 12, color: "#b26a00", fontWeight: 700 }}>
-            Warning: {domainMathHint}
-          </div>
-        )}
-
-        {bestMethod && (
-          <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <span
-              style={{
-                fontSize: 12,
-                fontWeight: 900,
-                border: "1px solid #111",
-                borderRadius: 999,
-                padding: "4px 10px",
-                background: "#fff",
-              }}
-            >
-              ★ Best: {METHOD_META[bestMethod]?.label || bestMethod}
-            </span>
-            <span style={{ color: "#666", fontSize: 12 }}>
-              Heuristic: converged → fewest iterations → smallest residual
-            </span>
-          </div>
-        )}
+      <div
+        style={{
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          fontSize: 13,
+        }}
+      >
+        f(x) = {expr}
+        <br />
+        {numericalDerivative ? "f'(x) = (numerical)" : `f'(x) = ${dexpr || "(none)"}`}
+        <br />
+        bracket = [{a}, {b}] • guesses: x0={x0 === "" ? "(default)" : x0}, x1={x1 === "" ? "(default)" : x1}
+        <br />
+        tol = {tol} • max_iter = {maxIter}
       </div>
-    ) : null;
+
+      {domainMathHint && (
+        <div style={{ marginTop: 8, fontSize: 12, color: "#b26a00", fontWeight: 700 }}>
+          Warning: {domainMathHint}
+        </div>
+      )}
+
+      {bestMethod && (
+        <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 900,
+              border: "1px solid #111",
+              borderRadius: 999,
+              padding: "4px 10px",
+              background: "#fff",
+            }}
+          >
+            ★ Best: {METHOD_META[bestMethod]?.label || bestMethod}
+          </span>
+          <span style={{ color: "#666", fontSize: 12 }}>
+            Heuristic: converged → fewest iterations → smallest residual
+          </span>
+        </div>
+      )}
+    </div>
+  ) : null;
 
   return (
     <div style={{ fontFamily: "system-ui, Arial", padding: 20, maxWidth: 1100, margin: "0 auto" }}>
@@ -532,6 +567,14 @@ export default function Home() {
         Teaching-oriented root finding (compare methods + explanations).
       </div>
 
+      <BackendWarmupPanel
+        backendStatus={backendStatus}
+        statusMessage={statusMessage}
+        isPreparingRun={isPreparingRun}
+        onWake={() => wakeBackendOnly({ onError: (e) => setErr(e.message || String(e)) })}
+        disabled={loading}
+      />
+
       <div
         style={{
           border: "1px solid #ddd",
@@ -587,6 +630,7 @@ export default function Home() {
             value={benchmarkId}
             onChange={handleBenchmarkChange}
             style={{ width: "100%", padding: 8, marginTop: 6, marginBottom: 12 }}
+            disabled={loading || isPreparingRun}
           >
             <option value="">Select a benchmark...</option>
             {BENCHMARKS.map((bmk) => (
@@ -601,6 +645,7 @@ export default function Home() {
             value={expr}
             onChange={(e) => setExpr(e.target.value)}
             style={{ width: "100%", padding: 8, marginTop: 6, marginBottom: 12 }}
+            disabled={loading || isPreparingRun}
           />
 
           <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
@@ -608,6 +653,7 @@ export default function Home() {
               type="checkbox"
               checked={numericalDerivative}
               onChange={(e) => setNumericalDerivative(e.target.checked)}
+              disabled={loading || isPreparingRun}
             />
             <span>Use numerical derivative</span>
           </div>
@@ -616,7 +662,7 @@ export default function Home() {
           <input
             value={dexpr}
             onChange={(e) => setDexpr(e.target.value)}
-            disabled={numericalDerivative === true}
+            disabled={numericalDerivative === true || loading || isPreparingRun}
             placeholder={numericalDerivative ? "Using numerical derivative" : "e.g. 3*x^2 - 1"}
             style={{ width: "100%", padding: 8, marginTop: 6 }}
           />
@@ -628,11 +674,21 @@ export default function Home() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div>
               <label>a</label>
-              <input value={a} onChange={(e) => setA(e.target.value)} style={{ width: "100%", padding: 8, marginTop: 6 }} />
+              <input
+                value={a}
+                onChange={(e) => setA(e.target.value)}
+                style={{ width: "100%", padding: 8, marginTop: 6 }}
+                disabled={loading || isPreparingRun}
+              />
             </div>
             <div>
               <label>b</label>
-              <input value={b} onChange={(e) => setB(e.target.value)} style={{ width: "100%", padding: 8, marginTop: 6 }} />
+              <input
+                value={b}
+                onChange={(e) => setB(e.target.value)}
+                style={{ width: "100%", padding: 8, marginTop: 6 }}
+                disabled={loading || isPreparingRun}
+              />
             </div>
 
             <div style={{ gridColumn: "1 / -1" }}>
@@ -660,6 +716,7 @@ export default function Home() {
                       onChange={(e) => setX0(e.target.value)}
                       placeholder="e.g. 0.0"
                       style={{ width: "100%", padding: 8, marginTop: 6 }}
+                      disabled={loading || isPreparingRun}
                     />
                   </div>
 
@@ -670,6 +727,7 @@ export default function Home() {
                       onChange={(e) => setX1(e.target.value)}
                       placeholder="e.g. -1.0"
                       style={{ width: "100%", padding: 8, marginTop: 6 }}
+                      disabled={loading || isPreparingRun}
                     />
                   </div>
                 </div>
@@ -678,48 +736,58 @@ export default function Home() {
 
             <div>
               <label>tol</label>
-              <input value={tol} onChange={(e) => setTol(e.target.value)} style={{ width: "100%", padding: 8, marginTop: 6 }} />
+              <input
+                value={tol}
+                onChange={(e) => setTol(e.target.value)}
+                style={{ width: "100%", padding: 8, marginTop: 6 }}
+                disabled={loading || isPreparingRun}
+              />
             </div>
             <div>
               <label>max_iter</label>
-              <input value={maxIter} onChange={(e) => setMaxIter(e.target.value)} style={{ width: "100%", padding: 8, marginTop: 6 }} />
+              <input
+                value={maxIter}
+                onChange={(e) => setMaxIter(e.target.value)}
+                style={{ width: "100%", padding: 8, marginTop: 6 }}
+                disabled={loading || isPreparingRun}
+              />
             </div>
           </div>
 
           <button
             onClick={runCompare}
-            disabled={loading}
+            disabled={loading || isPreparingRun}
             style={{
               marginTop: 14,
               padding: "10px 14px",
               borderRadius: 10,
               border: "1px solid #222",
-              background: loading ? "#eee" : "#111",
-              color: loading ? "#333" : "white",
-              cursor: loading ? "default" : "pointer",
+              background: loading || isPreparingRun ? "#eee" : "#111",
+              color: loading || isPreparingRun ? "#333" : "white",
+              cursor: loading || isPreparingRun ? "default" : "pointer",
               width: "100%",
               fontWeight: 600,
             }}
           >
-            {loading ? "Running..." : "Compare Methods"}
+            {isPreparingRun ? "Preparing..." : loading ? "Running..." : "Compare Methods"}
           </button>
 
           <button
             onClick={createShareRun}
-            disabled={loading}
+            disabled={loading || isPreparingRun}
             style={{
               marginTop: 10,
               padding: "10px 14px",
               borderRadius: 10,
               border: "1px solid #222",
-              background: loading ? "#eee" : "white",
-              color: loading ? "#333" : "#111",
-              cursor: loading ? "default" : "pointer",
+              background: loading || isPreparingRun ? "#eee" : "white",
+              color: loading || isPreparingRun ? "#333" : "#111",
+              cursor: loading || isPreparingRun ? "default" : "pointer",
               width: "100%",
               fontWeight: 700,
             }}
           >
-            {loading ? "Creating..." : "Create Share Link"}
+            {isPreparingRun ? "Preparing..." : loading ? "Creating..." : "Create Share Link"}
           </button>
 
           {err && <div style={{ marginTop: 10, color: "crimson", whiteSpace: "pre-wrap" }}>{err}</div>}

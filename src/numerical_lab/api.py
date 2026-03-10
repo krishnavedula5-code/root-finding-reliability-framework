@@ -277,6 +277,12 @@ app.add_middleware(
 def health():
     return {"ok": True, "app_version": APP_VERSION}
 
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "service": "numerical-solver-backend"
+    }
 
 @app.get("/__whoami")
 def whoami():

@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-
 import { API } from "./api";
-
+import useBackendWarmup from "./useBackendWarmup";
+import BackendWarmupPanel from "./BackendWarmupPanel";
 
 const METHOD_OPTIONS = [
   "newton",
@@ -18,6 +18,14 @@ export default function ExperimentsDashboard() {
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
+
+  const {
+    backendStatus,
+    statusMessage,
+    isPreparingRun,
+    wakeBackendOnly,
+    runWithWarmup,
+  } = useBackendWarmup({ autoPoll: true, pollIntervalMs: 25000 });
 
   const [problemMode, setProblemMode] = useState("benchmark");
   const [problemId, setProblemId] = useState("p4");
@@ -166,6 +174,7 @@ export default function ExperimentsDashboard() {
       setError(null);
       setResult(null);
       setJobStatus(null);
+      setJobId(null);
 
       stopPolling();
       validateInputs();
@@ -173,20 +182,31 @@ export default function ExperimentsDashboard() {
       const payload = buildPayload();
       console.log("SWEEP PAYLOAD:", payload);
 
-      const res = await fetch(`${API}/experiments/sweep`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const data = await runWithWarmup(
+        async () => {
+          const res = await fetch(`${API}/experiments/sweep`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(
+              `Failed to create experiment job: ${res.status} ${text}`
+            );
+          }
+
+          return res.json();
         },
-        body: JSON.stringify(payload),
-      });
+        {
+          startMessage: "Compute engine ready. Starting sweep experiment...",
+          doneMessage: "Sweep submitted successfully.",
+        }
+      );
 
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Failed to create experiment job: ${res.status} ${text}`);
-      }
-
-      const data = await res.json();
       console.log("SWEEP RESPONSE:", data);
 
       if (!data?.job_id) {
@@ -371,6 +391,7 @@ export default function ExperimentsDashboard() {
           Experiment Jobs
         </Link>
       </div>
+
       <div style={styles.headerBlock}>
         <h1 style={styles.pageTitle}>Experiment Dashboard</h1>
         <p style={styles.pageSubtitle}>
@@ -388,7 +409,7 @@ export default function ExperimentsDashboard() {
             <select
               value={problemMode}
               onChange={(e) => setProblemMode(e.target.value)}
-              disabled={running}
+              disabled={running || isPreparingRun}
               style={styles.input}
             >
               <option value="benchmark">Benchmark</option>
@@ -402,7 +423,7 @@ export default function ExperimentsDashboard() {
               <select
                 value={problemId}
                 onChange={(e) => setProblemId(e.target.value)}
-                disabled={running}
+                disabled={running || isPreparingRun}
                 style={styles.input}
               >
                 <option value="p1">p1</option>
@@ -418,7 +439,7 @@ export default function ExperimentsDashboard() {
                 <input
                   value={expr}
                   onChange={(e) => setExpr(e.target.value)}
-                  disabled={running}
+                  disabled={running || isPreparingRun}
                   style={styles.input}
                 />
               </div>
@@ -428,7 +449,7 @@ export default function ExperimentsDashboard() {
                 <input
                   value={dexpr}
                   onChange={(e) => setDexpr(e.target.value)}
-                  disabled={running}
+                  disabled={running || isPreparingRun}
                   style={styles.input}
                 />
               </div>
@@ -439,7 +460,7 @@ export default function ExperimentsDashboard() {
                   type="number"
                   value={scalarMin}
                   onChange={(e) => setScalarMin(e.target.value)}
-                  disabled={running}
+                  disabled={running || isPreparingRun}
                   style={styles.input}
                 />
               </div>
@@ -450,7 +471,7 @@ export default function ExperimentsDashboard() {
                   type="number"
                   value={scalarMax}
                   onChange={(e) => setScalarMax(e.target.value)}
-                  disabled={running}
+                  disabled={running || isPreparingRun}
                   style={styles.input}
                 />
               </div>
@@ -461,7 +482,7 @@ export default function ExperimentsDashboard() {
                   type="number"
                   value={bracketMin}
                   onChange={(e) => setBracketMin(e.target.value)}
-                  disabled={running}
+                  disabled={running || isPreparingRun}
                   style={styles.input}
                 />
               </div>
@@ -472,7 +493,7 @@ export default function ExperimentsDashboard() {
                   type="number"
                   value={bracketMax}
                   onChange={(e) => setBracketMax(e.target.value)}
-                  disabled={running}
+                  disabled={running || isPreparingRun}
                   style={styles.input}
                 />
               </div>
@@ -484,7 +505,7 @@ export default function ExperimentsDashboard() {
             <select
               value={boundaryMethod}
               onChange={(e) => setBoundaryMethod(e.target.value)}
-              disabled={running}
+              disabled={running || isPreparingRun}
               style={styles.input}
             >
               <option value="newton">newton</option>
@@ -503,7 +524,7 @@ export default function ExperimentsDashboard() {
               max="5000"
               value={nPoints}
               onChange={(e) => setNPoints(e.target.value)}
-              disabled={running}
+              disabled={running || isPreparingRun}
               style={styles.input}
             />
           </div>
@@ -515,7 +536,7 @@ export default function ExperimentsDashboard() {
               step="any"
               value={tol}
               onChange={(e) => setTol(e.target.value)}
-              disabled={running}
+              disabled={running || isPreparingRun}
               style={styles.input}
             />
           </div>
@@ -526,11 +547,19 @@ export default function ExperimentsDashboard() {
               type="number"
               value={maxIter}
               onChange={(e) => setMaxIter(e.target.value)}
-              disabled={running}
+              disabled={running || isPreparingRun}
               style={styles.input}
             />
           </div>
         </div>
+
+        <BackendWarmupPanel
+          backendStatus={backendStatus}
+          statusMessage={statusMessage}
+          isPreparingRun={isPreparingRun}
+          onWake={() => wakeBackendOnly({ onError: (err) => setError(err.message) })}
+          disabled={running}
+        />
 
         <div style={{ marginTop: 20 }}>
           <label style={styles.label}>Methods to Compare</label>
@@ -541,7 +570,7 @@ export default function ExperimentsDashboard() {
                   type="checkbox"
                   checked={selectedMethods.includes(m)}
                   onChange={() => toggleMethod(m)}
-                  disabled={running}
+                  disabled={running || isPreparingRun}
                 />
                 <span>{m}</span>
               </label>
@@ -552,13 +581,17 @@ export default function ExperimentsDashboard() {
         <div style={{ marginTop: 22 }}>
           <button
             onClick={runSweep}
-            disabled={running}
+            disabled={running || isPreparingRun}
             style={{
               ...styles.runButton,
-              ...(running ? styles.runButtonDisabled : {}),
+              ...(running || isPreparingRun ? styles.runButtonDisabled : {}),
             }}
           >
-            {running ? "Running..." : "Run Sweep Experiment"}
+            {isPreparingRun
+              ? "Preparing..."
+              : running
+                ? "Running..."
+                : "Run Sweep Experiment"}
           </button>
         </div>
       </div>
