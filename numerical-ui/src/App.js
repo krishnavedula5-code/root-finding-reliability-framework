@@ -4,9 +4,7 @@ import Home from "./Home";
 import RunViewer from "./RunViewer";
 import ExperimentsDashboard from "./ExperimentsDashboard";
 import ExperimentJobs from "./ExperimentJobs";
-
-const API =
-  process.env.REACT_APP_API_BASE_URL || "http://127.0.0.1:8000";
+import { API } from "./api"
 
 function TopNav() {
   const linkStyle = ({ isActive }) => ({
