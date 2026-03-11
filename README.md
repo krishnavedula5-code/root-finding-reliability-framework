@@ -1,3 +1,7 @@
+Numerical Solver Reliability Framework
+
+Basin-of-attraction analysis | Solver benchmarking | Convergence diagnostics
+
 # Numerical Lab — Teaching-Oriented Root Finding
 
 Numerical Lab is a pedagogical numerical solver designed for **numerical analysis education**.
