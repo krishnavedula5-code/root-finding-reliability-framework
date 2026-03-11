@@ -49,16 +49,29 @@ export default function ExperimentsDashboard() {
   const [tol, setTol] = useState(1e-10);
   const [maxIter, setMaxIter] = useState(100);
 
+  // Parent grouped sections
+  const [showInterpretation, setShowInterpretation] = useState(true);
+  const [showOverview, setShowOverview] = useState(true);
+  const [showBasinGeometry, setShowBasinGeometry] = useState(true);
+  const [showSolverStability, setShowSolverStability] = useState(true);
+  const [showStatDiagnostics, setShowStatDiagnostics] = useState(true);
+  const [showOutputsSection, setShowOutputsSection] = useState(false);
+
+  // Child sections
   const [showBoundaryAnalysis, setShowBoundaryAnalysis] = useState(true);
   const [showBasinMap, setShowBasinMap] = useState(true);
-  const [showSolverComparison, setShowSolverComparison] = useState(true);
-  const [showPareto, setShowPareto] = useState(true);
   const [showBasinComplexity, setShowBasinComplexity] = useState(true);
   const [showBasinDistribution, setShowBasinDistribution] = useState(false);
+  const [showRootBasinSize, setShowRootBasinSize] = useState(false);
+
   const [showFailureRegions, setShowFailureRegions] = useState(false);
+
+  const [showSolverComparison, setShowSolverComparison] = useState(true);
+  const [showPareto, setShowPareto] = useState(true);
   const [showHistograms, setShowHistograms] = useState(false);
   const [showCcdfs, setShowCcdfs] = useState(false);
-  const [showArtifacts, setShowArtifacts] = useState(false);
+
+  const [showArtifacts, setShowArtifacts] = useState(true);
 
   const pollRef = useRef(null);
 
@@ -73,6 +86,13 @@ export default function ExperimentsDashboard() {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+  }
+
+  function prettyMethod(name) {
+    if (!name) return "-";
+    return String(name)
+      .replaceAll("_", " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
   function validateInputs() {
@@ -275,7 +295,9 @@ export default function ExperimentsDashboard() {
     ) {
       return path;
     }
-    return `${API}${String(path).startsWith("/") ? "" : "/"}${String(path).replace(/\\/g, "/")}`;
+    return `${API}${
+      String(path).startsWith("/") ? "" : "/"
+    }${String(path).replace(/\\/g, "/")}`;
   }
 
   function formatPercent(x) {
@@ -333,6 +355,14 @@ export default function ExperimentsDashboard() {
     toOutputUrl(result?.artifacts?.basin_map) ||
     toOutputUrl(analytics?.basin_map);
 
+  const basinEntropyPlotUrl =
+    toOutputUrl(analytics?.basin_entropy_plot) ||
+    toOutputUrl(analytics?.basin_entropy_comparison_plot);
+
+  const rootDistributionEntries = analytics?.basin_root_distribution
+    ? Object.entries(analytics.basin_root_distribution)
+    : [];
+
   const comparisonRows = analytics?.comparison_summary_data?.methods || [];
   const entropyRows = analytics?.basin_entropy_data?.methods || [];
 
@@ -371,12 +401,120 @@ export default function ExperimentsDashboard() {
   const boundaryClusterTol = result?.boundary_cluster_tol;
 
   const boundarySummaryText = boundarySummary
-    ? `${boundarySummary.clustered_count ?? boundaryRegions.length} regions (${boundarySummary.raw_count ?? rawBoundaries.length} raw)`
+    ? `${boundarySummary.clustered_count ?? boundaryRegions.length} regions (${
+        boundarySummary.raw_count ?? rawBoundaries.length
+      } raw)`
     : boundaryRegions.length > 0
       ? `${boundaryRegions.length} regions`
       : "None";
 
   const clusterTol = analytics?.basin_entropy_data?.cluster_tol;
+
+  const totalMethods = selectedMethods.length;
+  const bestSuccessMethod =
+    comparisonRows.length > 0
+      ? [...comparisonRows].sort(
+          (a, b) => Number(b.success_rate || 0) - Number(a.success_rate || 0)
+        )[0]
+      : null;
+
+  const fastestMedianMethod =
+    comparisonRows.length > 0
+      ? [...comparisonRows]
+          .filter((row) => Number.isFinite(Number(row.median_iter)))
+          .sort((a, b) => Number(a.median_iter) - Number(b.median_iter))[0]
+      : null;
+
+  const mostStableMethod =
+    comparisonRows.length > 0
+      ? [...comparisonRows].sort(
+          (a, b) => Number(a.failure_count || 0) - Number(b.failure_count || 0)
+        )[0]
+      : null;
+
+  const mostStructuredMethod =
+    entropyRows.length > 0
+      ? [...entropyRows].sort(
+          (a, b) => Number(a.entropy || 0) - Number(b.entropy || 0)
+        )[0]
+      : null;
+  
+  function generateInsights() {
+    const insights = [];
+
+    if (bestSuccessMethod) {
+      insights.push(
+        `${prettyMethod(bestSuccessMethod.method)} achieved the highest success rate (${formatPercent(
+          bestSuccessMethod.success_rate
+        )}).`
+      );
+    }
+
+    if (fastestMedianMethod) {
+      insights.push(
+        `${prettyMethod(fastestMedianMethod.method)} has the fastest median convergence (${formatNumber(
+          fastestMedianMethod.median_iter
+        )} iterations).`
+      );
+    }
+
+    if (mostStableMethod) {
+      insights.push(
+        `${prettyMethod(mostStableMethod.method)} exhibits the lowest failure count (${formatNumber(
+          mostStableMethod.failure_count
+        )}).`
+      );
+    }
+
+    if (mostStructuredMethod) {
+      insights.push(
+        `${prettyMethod(mostStructuredMethod.method)} shows the most structured basin geometry (lowest entropy = ${formatEntropy(
+          mostStructuredMethod.entropy
+        )}).`
+      );
+    }
+
+    if (detectedRoots.length > 0) {
+      insights.push(
+        `Detected real root basins in this experiment: ${detectedRoots.join(", ")}.`
+      );
+    }
+
+    if (boundarySummary && boundarySummary.clustered_count !== undefined) {
+      insights.push(
+        `Boundary analysis detected ${boundarySummary.clustered_count} clustered transition region(s), indicating where solver behavior changes across initializations.`
+      );
+    }
+
+    if (rootDistributionEntries.length > 0) {
+      insights.push(
+        "Basin distribution plots show how different initializations are attracted to different roots, revealing solver sensitivity to starting conditions."
+      );
+    }
+
+    return insights;
+  }
+
+ function suggestSolverChoice() {
+
+  if (!comparisonRows.length) {
+    return "No solver recommendation available.";
+  }
+
+  const reliable = bestSuccessMethod?.method;
+  const fastest = fastestMedianMethod?.method;
+  const stable = mostStableMethod?.method;
+
+  if (reliable && reliable === fastest) {
+    return `${prettyMethod(reliable)} is the best overall choice here because it achieves the highest success rate while also converging fastest on average.`;
+  }
+
+  if (reliable && reliable === stable) {
+    return `${prettyMethod(reliable)} provides the most reliable performance with the lowest observed failure risk.`;
+  }
+
+  return `${prettyMethod(reliable)} is the most reliable solver, while ${prettyMethod(fastest)} offers the fastest convergence. The best choice depends on whether robustness or speed is more important for this problem.`;
+}
 
   return (
     <div style={styles.page}>
@@ -557,7 +695,9 @@ export default function ExperimentsDashboard() {
           backendStatus={backendStatus}
           statusMessage={statusMessage}
           isPreparingRun={isPreparingRun}
-          onWake={() => wakeBackendOnly({ onError: (err) => setError(err.message) })}
+          onWake={() =>
+            wakeBackendOnly({ onError: (err) => setError(err.message) })
+          }
           disabled={running}
         />
 
@@ -572,7 +712,7 @@ export default function ExperimentsDashboard() {
                   onChange={() => toggleMethod(m)}
                   disabled={running || isPreparingRun}
                 />
-                <span>{m}</span>
+                <span>{prettyMethod(m)}</span>
               </label>
             ))}
           </div>
@@ -648,390 +788,620 @@ export default function ExperimentsDashboard() {
 
       {result && (
         <div style={styles.section}>
-          <h2 style={styles.resultsTitle}>Experiment Results</h2>
+          <h2 style={styles.resultsTitle}>Experiment Analysis</h2>
 
-          <div style={styles.summaryGrid}>
-            <SummaryCard
-              label="Problem Mode"
-              value={result.problem_mode || problemMode}
-            />
-            <SummaryCard
-              label="Problem"
-              value={result.problem_id || analyticsKey}
-            />
-            <SummaryCard label="Boundary Method" value={boundaryMethod} />
-            <SummaryCard label="Points" value={String(nPoints)} />
-            <SummaryCard label="Methods" value={selectedMethods.join(", ")} />
-            <SummaryCard
-              label="Sweep Folder"
-              value={result.latest_sweep_dir || "-"}
-            />
-            <SummaryCard label="Boundary Regions" value={boundarySummaryText} />
-          </div>
+          <SectionCard
+            title="Automated Experiment Interpretation"
+            isOpen={showInterpretation}
+            onToggle={() => setShowInterpretation((v) => !v)}
+            description="Automatically generated observations and recommendations from the current experiment."
+          >
+            <div style={styles.interpretationGrid}>
+              <div style={styles.cardMuted}>
+                <h3 style={styles.subsectionTitle}>Key Observations</h3>
+                {generateInsights().length > 0 ? (
+                  <ul style={styles.insightList}>
+                    {generateInsights().map((text, i) => (
+                      <li key={i} style={styles.insightItem}>
+                        {text}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={styles.mutedText}>No observations available yet.</p>
+                )}
+              </div>
 
-          <div style={styles.section}>
-            <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>Detected Real Roots</h3>
+              <div style={styles.cardMuted}>
+                <h3 style={styles.subsectionTitle}>Suggested Solver Choice</h3>
+                <p style={styles.recommendationText}>{suggestSolverChoice()}</p>
+              </div>
+            </div>
+          </SectionCard>
 
-              {detectedRoots.length > 0 ? (
-                <div style={{ fontSize: 16, fontWeight: 600 }}>
-                  {detectedRoots.join(", ")}
+          <SectionCard
+            title="Overview"
+            isOpen={showOverview}
+            onToggle={() => setShowOverview((v) => !v)}
+            description="High-level summary of the experiment configuration, detected roots, and the main findings from the sweep."
+          >
+            <div style={styles.summaryGrid}>
+              <SummaryCard
+                label="Problem Mode"
+                value={result.problem_mode || problemMode}
+              />
+              <SummaryCard
+                label="Problem"
+                value={result.problem_id || analyticsKey}
+              />
+              <SummaryCard
+                label="Boundary Method"
+                value={prettyMethod(boundaryMethod)}
+              />
+              <SummaryCard label="Points" value={String(nPoints)} />
+              <SummaryCard
+                label="Methods"
+                value={selectedMethods.map(prettyMethod).join(", ")}
+              />
+              <SummaryCard
+                label="Sweep Folder"
+                value={result.latest_sweep_dir || "-"}
+              />
+              <SummaryCard
+                label="Boundary Regions"
+                value={boundarySummaryText}
+              />
+            </div>
+
+            <div style={styles.subsectionSpacer}>
+              <div style={styles.cardMuted}>
+                <h3 style={styles.subsectionTitle}>Detected Real Roots</h3>
+                {detectedRoots.length > 0 ? (
+                  <div style={{ fontSize: 16, fontWeight: 600 }}>
+                    {detectedRoots.join(", ")}
+                  </div>
+                ) : (
+                  <p style={styles.mutedText}>
+                    Root locations inferred from basin clustering are not yet
+                    available for this experiment.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div style={styles.subsectionSpacer}>
+              <div style={styles.cardMuted}>
+                <h3 style={styles.subsectionTitle}>Key Findings</h3>
+                <div style={styles.keyFindingsGrid}>
+                  <SummaryCard
+                    label="Methods Compared"
+                    value={String(totalMethods)}
+                  />
+                  <SummaryCard
+                    label="Best Success Rate"
+                    value={
+                      bestSuccessMethod
+                        ? `${prettyMethod(bestSuccessMethod.method)} (${formatPercent(
+                            bestSuccessMethod.success_rate
+                          )})`
+                        : "-"
+                    }
+                  />
+                  <SummaryCard
+                    label="Fastest Median"
+                    value={
+                      fastestMedianMethod
+                        ? `${prettyMethod(fastestMedianMethod.method)} (${formatNumber(
+                            fastestMedianMethod.median_iter
+                          )})`
+                        : "-"
+                    }
+                  />
+                  <SummaryCard
+                    label="Lowest Failures"
+                    value={
+                      mostStableMethod
+                        ? `${prettyMethod(mostStableMethod.method)} (${formatNumber(
+                            mostStableMethod.failure_count
+                          )})`
+                        : "-"
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            title="Basin Geometry"
+            isOpen={showBasinGeometry}
+            onToggle={() => setShowBasinGeometry((v) => !v)}
+            description="Geometry of solver basins, basin transitions, entropy, and root attractor regions."
+          >
+            <SectionCard
+              title="Boundary Analysis"
+              isOpen={showBoundaryAnalysis}
+              onToggle={() => setShowBoundaryAnalysis((v) => !v)}
+            >
+              {boundarySummary ? (
+                <>
+                  <div style={styles.summaryGrid}>
+                    <SummaryCard
+                      label="Clustered Regions"
+                      value={String(boundarySummary.clustered_count ?? "-")}
+                    />
+                    <SummaryCard
+                      label="Raw Boundary Points"
+                      value={String(boundarySummary.raw_count ?? "-")}
+                    />
+                    <SummaryCard
+                      label="Leftmost Boundary"
+                      value={formatNumber(boundarySummary.leftmost)}
+                    />
+                    <SummaryCard
+                      label="Rightmost Boundary"
+                      value={formatNumber(boundarySummary.rightmost)}
+                    />
+                    <SummaryCard
+                      label="Median Spacing"
+                      value={formatNumber(boundarySummary.median_spacing)}
+                    />
+                    <SummaryCard
+                      label="Cluster Tolerance"
+                      value={formatNumber(boundaryClusterTol)}
+                    />
+                  </div>
+
+                  <div style={{ marginTop: 18 }}>
+                    {boundaryRegions.length > 0 ? (
+                      <div style={styles.tableWrap}>
+                        <table style={styles.table}>
+                          <thead>
+                            <tr>
+                              <th style={styles.th}>Region</th>
+                              <th style={styles.th}>Center</th>
+                              <th style={styles.th}>Start</th>
+                              <th style={styles.th}>End</th>
+                              <th style={styles.th}>Width</th>
+                              <th style={styles.th}>Raw Points</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {boundaryRegions.map((region) => (
+                              <tr key={`boundary-region-${region.region_id}`}>
+                                <td style={styles.td}>{region.region_id}</td>
+                                <td style={styles.td}>
+                                  {formatNumber(region.center)}
+                                </td>
+                                <td style={styles.td}>
+                                  {formatNumber(region.start)}
+                                </td>
+                                <td style={styles.td}>
+                                  {formatNumber(region.end)}
+                                </td>
+                                <td style={styles.td}>
+                                  {formatNumber(region.width)}
+                                </td>
+                                <td style={styles.td}>
+                                  {formatNumber(region.count)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p style={styles.mutedText}>
+                        No clustered boundary regions available.
+                      </p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p style={styles.mutedText}>No boundary summary available.</p>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              title="Basin Map"
+              isOpen={showBasinMap}
+              onToggle={() => setShowBasinMap((v) => !v)}
+            >
+              {basinMapUrl ? (
+                <img
+                  src={basinMapUrl}
+                  alt="Basin map"
+                  style={styles.basinImage}
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+              ) : (
+                <p style={styles.mutedText}>No basin map available.</p>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              title="Basin Complexity"
+              isOpen={showBasinComplexity}
+              onToggle={() => setShowBasinComplexity((v) => !v)}
+            >
+              {clusterTol !== undefined && clusterTol !== null && (
+                <p style={styles.metaText}>
+                  <b>Cluster tolerance:</b> {formatNumber(clusterTol)} (based on
+                  sweep resolution)
+                </p>
+              )}
+
+              {basinEntropyPlotUrl ? (
+                <div style={styles.plotGrid}>
+                  <div style={styles.plotCard}>
+                    <div style={styles.plotCardTitle}>
+                      Basin Entropy Comparison
+                    </div>
+                    <img
+                      src={basinEntropyPlotUrl}
+                      alt="Basin entropy comparison"
+                      style={styles.plotImage}
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
+                    />
+                  </div>
                 </div>
               ) : (
                 <p style={styles.mutedText}>
-                  Root locations inferred from basin clustering.
+                  No basin entropy comparison plot available.
                 </p>
               )}
-            </div>
-          </div>
+
+              {entropyRows.length > 0 ? (
+                <div style={styles.tableWrap}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Method</th>
+                        <th style={styles.th}>Entropy</th>
+                        <th style={styles.th}>Basins</th>
+                        <th style={styles.th}>Converged Runs</th>
+                        <th style={styles.th}>Cluster Tol</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entropyRows.map((row) => (
+                        <tr key={`entropy-${prettyMethod(row.method)}`}>
+                          <td style={styles.td}>{prettyMethod(row.method)}</td>
+                          <td style={styles.td}>
+                            {formatEntropy(row.entropy)}
+                          </td>
+                          <td style={styles.td}>
+                            {formatNumber(row.num_basins)}
+                          </td>
+                          <td style={styles.td}>
+                            {formatNumber(row.total_converged)}
+                          </td>
+                          <td style={styles.td}>
+                            {formatNumber(row.cluster_tol)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p style={styles.mutedText}>
+                  No basin entropy metrics available.
+                </p>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              title="Basin Distribution Plots"
+              isOpen={showBasinDistribution}
+              onToggle={() => setShowBasinDistribution((v) => !v)}
+            >
+              {basinDistributionEntries.length > 0 ? (
+                <div style={styles.plotGrid}>
+                  {basinDistributionEntries.map(([methodName, path]) => (
+                    <div key={`basin-${methodName}`} style={styles.plotCard}>
+                      <div style={styles.plotCardTitle}>
+                        {prettyMethod(methodName)}
+                      </div>
+                      <img
+                        src={toOutputUrl(path)}
+                        alt={`Basin distribution for ${methodName}`}
+                        style={styles.plotImage}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={styles.mutedText}>
+                  No basin distribution artifacts available.
+                </p>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              title="Root Basin Size"
+              isOpen={showRootBasinSize}
+              onToggle={() => setShowRootBasinSize((v) => !v)}
+            >
+              {rootDistributionEntries.length > 0 ? (
+                <div style={styles.plotGrid}>
+                  {rootDistributionEntries.map(([method, path]) => (
+                    <div key={method} style={styles.plotCard}>
+                      <div style={styles.plotCardTitle}>
+                        {prettyMethod(method)}
+                      </div>
+                      <img
+                        src={toOutputUrl(path)}
+                        alt={`Root basin distribution for ${method}`}
+                        style={styles.plotImage}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={styles.mutedText}>
+                  No root basin distribution available.
+                </p>
+              )}
+            </SectionCard>
+          </SectionCard>
 
           <SectionCard
-            title="Boundary Analysis"
-            isOpen={showBoundaryAnalysis}
-            onToggle={() => setShowBoundaryAnalysis((v) => !v)}
+            title="Solver Stability"
+            isOpen={showSolverStability}
+            onToggle={() => setShowSolverStability((v) => !v)}
+            description="Regions where solvers fail, diverge, or exhibit unstable convergence."
           >
-            {boundarySummary ? (
-              <>
-                <div style={styles.summaryGrid}>
-                  <SummaryCard
-                    label="Clustered Regions"
-                    value={String(boundarySummary.clustered_count ?? "-")}
-                  />
-                  <SummaryCard
-                    label="Raw Boundary Points"
-                    value={String(boundarySummary.raw_count ?? "-")}
-                  />
-                  <SummaryCard
-                    label="Leftmost Boundary"
-                    value={formatNumber(boundarySummary.leftmost)}
-                  />
-                  <SummaryCard
-                    label="Rightmost Boundary"
-                    value={formatNumber(boundarySummary.rightmost)}
-                  />
-                  <SummaryCard
-                    label="Median Spacing"
-                    value={formatNumber(boundarySummary.median_spacing)}
-                  />
-                  <SummaryCard
-                    label="Cluster Tolerance"
-                    value={formatNumber(boundaryClusterTol)}
-                  />
-                </div>
-
-                <div style={{ marginTop: 18 }}>
-                  {boundaryRegions.length > 0 ? (
-                    <div style={styles.tableWrap}>
-                      <table style={styles.table}>
-                        <thead>
-                          <tr>
-                            <th style={styles.th}>Region</th>
-                            <th style={styles.th}>Center</th>
-                            <th style={styles.th}>Start</th>
-                            <th style={styles.th}>End</th>
-                            <th style={styles.th}>Width</th>
-                            <th style={styles.th}>Raw Points</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {boundaryRegions.map((region) => (
-                            <tr key={`boundary-region-${region.region_id}`}>
-                              <td style={styles.td}>{region.region_id}</td>
-                              <td style={styles.td}>{formatNumber(region.center)}</td>
-                              <td style={styles.td}>{formatNumber(region.start)}</td>
-                              <td style={styles.td}>{formatNumber(region.end)}</td>
-                              <td style={styles.td}>{formatNumber(region.width)}</td>
-                              <td style={styles.td}>{formatNumber(region.count)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+            <SectionCard
+              title="Failure Region Plots"
+              isOpen={showFailureRegions}
+              onToggle={() => setShowFailureRegions((v) => !v)}
+            >
+              {failureRegionEntries.length > 0 ? (
+                <div style={styles.plotGrid}>
+                  {failureRegionEntries.map(([methodName, path]) => (
+                    <div key={`fail-${methodName}`} style={styles.plotCard}>
+                      <div style={styles.plotCardTitle}>
+                        {prettyMethod(methodName)}
+                      </div>
+                      <img
+                        src={toOutputUrl(path)}
+                        alt={`Failure region for ${methodName}`}
+                        style={styles.plotImage}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
                     </div>
-                  ) : (
-                    <p style={styles.mutedText}>
-                      No clustered boundary regions available.
-                    </p>
+                  ))}
+                </div>
+              ) : (
+                <p style={styles.mutedText}>
+                  No failure region artifacts available.
+                </p>
+              )}
+            </SectionCard>
+          </SectionCard>
+
+          <SectionCard
+            title="Statistical Diagnostics"
+            isOpen={showStatDiagnostics}
+            onToggle={() => setShowStatDiagnostics((v) => !v)}
+            description="Summarizes aggregate solver performance, convergence efficiency, failure behavior, and tail-risk across all sampled initializations."
+          >
+            <SectionCard
+              title="Solver Comparison"
+              isOpen={showSolverComparison}
+              onToggle={() => setShowSolverComparison((v) => !v)}
+            >
+              {comparisonRows.length > 0 ? (
+                <div style={styles.tableWrap}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Method</th>
+                        <th style={styles.th}>Success Rate</th>
+                        <th style={styles.th}>Mean Iter</th>
+                        <th style={styles.th}>Median Iter</th>
+                        <th style={styles.th}>P95 Iter</th>
+                        <th style={styles.th}>Max Iter</th>
+                        <th style={styles.th}>Failure Count</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {comparisonRows.map((row) => (
+                        <tr key={prettyMethod(row.method)}>
+                          <td style={styles.td}>{prettyMethod(row.method)}</td>
+                          <td style={styles.td}>
+                            {formatPercent(row.success_rate)}
+                          </td>
+                          <td style={styles.td}>{formatMean(row.mean_iter)}</td>
+                          <td style={styles.td}>
+                            {formatNumber(row.median_iter)}
+                          </td>
+                          <td style={styles.td}>
+                            {formatNumber(row.p95_iter)}
+                          </td>
+                          <td style={styles.td}>
+                            {formatNumber(row.max_iter)}
+                          </td>
+                          <td style={styles.td}>
+                            {formatNumber(row.failure_count)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p style={styles.mutedText}>
+                  No comparison summary available.
+                </p>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              title="Pareto Tradeoff Analysis"
+              isOpen={showPareto}
+              onToggle={() => setShowPareto((v) => !v)}
+            >
+              {paretoMeanUrl || paretoMedianUrl ? (
+                <div style={styles.plotGrid}>
+                  {paretoMeanUrl && (
+                    <div style={styles.plotCard}>
+                      <div style={styles.plotCardTitle}>
+                        Mean Iterations vs Failure Rate
+                      </div>
+                      <img
+                        src={paretoMeanUrl}
+                        alt="Pareto mean iterations vs failure rate"
+                        style={styles.plotImage}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {paretoMedianUrl && (
+                    <div style={styles.plotCard}>
+                      <div style={styles.plotCardTitle}>
+                        Median Iterations vs Failure Rate
+                      </div>
+                      <img
+                        src={paretoMedianUrl}
+                        alt="Pareto median iterations vs failure rate"
+                        style={styles.plotImage}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </div>
                   )}
                 </div>
-              </>
-            ) : (
-              <p style={styles.mutedText}>No boundary summary available.</p>
-            )}
-          </SectionCard>
+              ) : (
+                <p style={styles.mutedText}>No Pareto artifacts available.</p>
+              )}
+            </SectionCard>
 
-          <SectionCard
-            title="Basin Map"
-            isOpen={showBasinMap}
-            onToggle={() => setShowBasinMap((v) => !v)}
-          >
-            {basinMapUrl ? (
-              <img
-                src={basinMapUrl}
-                alt="Basin map"
-                style={styles.basinImage}
-                onError={(e) => {
-                  e.currentTarget.style.display = "none";
-                }}
-              />
-            ) : (
-              <p style={styles.mutedText}>No basin map available.</p>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Solver Comparison Summary"
-            isOpen={showSolverComparison}
-            onToggle={() => setShowSolverComparison((v) => !v)}
-          >
-            {comparisonRows.length > 0 ? (
-              <div style={styles.tableWrap}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={styles.th}>Method</th>
-                      <th style={styles.th}>Success Rate</th>
-                      <th style={styles.th}>Mean Iter</th>
-                      <th style={styles.th}>Median Iter</th>
-                      <th style={styles.th}>P95 Iter</th>
-                      <th style={styles.th}>Max Iter</th>
-                      <th style={styles.th}>Failure Count</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {comparisonRows.map((row) => (
-                      <tr key={row.method}>
-                        <td style={styles.td}>{row.method}</td>
-                        <td style={styles.td}>{formatPercent(row.success_rate)}</td>
-                        <td style={styles.td}>{formatMean(row.mean_iter)}</td>
-                        <td style={styles.td}>{formatNumber(row.median_iter)}</td>
-                        <td style={styles.td}>{formatNumber(row.p95_iter)}</td>
-                        <td style={styles.td}>{formatNumber(row.max_iter)}</td>
-                        <td style={styles.td}>{formatNumber(row.failure_count)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p style={styles.mutedText}>No comparison summary available.</p>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Pareto Tradeoff Analysis"
-            isOpen={showPareto}
-            onToggle={() => setShowPareto((v) => !v)}
-          >
-            {paretoMeanUrl || paretoMedianUrl ? (
-              <div style={styles.plotGrid}>
-                {paretoMeanUrl && (
-                  <div style={styles.plotCard}>
-                    <div style={styles.plotCardTitle}>
-                      Mean Iterations vs Failure Rate
+            <SectionCard
+              title="Iteration Histograms"
+              isOpen={showHistograms}
+              onToggle={() => setShowHistograms((v) => !v)}
+            >
+              {histogramEntries.length > 0 ? (
+                <div style={styles.plotGrid}>
+                  {histogramEntries.map(([methodName, path]) => (
+                    <div key={`hist-${methodName}`} style={styles.plotCard}>
+                      <div style={styles.plotCardTitle}>
+                        {prettyMethod(methodName)}
+                      </div>
+                      <img
+                        src={toOutputUrl(path)}
+                        alt={`Iteration histogram for ${methodName}`}
+                        style={styles.plotImage}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
                     </div>
-                    <img
-                      src={paretoMeanUrl}
-                      alt="Pareto mean iterations vs failure rate"
-                      style={styles.plotImage}
-                    />
-                  </div>
-                )}
+                  ))}
+                </div>
+              ) : (
+                <p style={styles.mutedText}>No histogram artifacts available.</p>
+              )}
+            </SectionCard>
 
-                {paretoMedianUrl && (
-                  <div style={styles.plotCard}>
-                    <div style={styles.plotCardTitle}>
-                      Median Iterations vs Failure Rate
+            <SectionCard
+              title="Iteration CCDFs"
+              isOpen={showCcdfs}
+              onToggle={() => setShowCcdfs((v) => !v)}
+            >
+              {ccdfEntries.length > 0 ? (
+                <div style={styles.plotGrid}>
+                  {ccdfEntries.map(([methodName, path]) => (
+                    <div key={`ccdf-${methodName}`} style={styles.plotCard}>
+                      <div style={styles.plotCardTitle}>
+                        {prettyMethod(methodName)}
+                      </div>
+                      <img
+                        src={toOutputUrl(path)}
+                        alt={`Iteration CCDF for ${methodName}`}
+                        style={styles.plotImage}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
                     </div>
-                    <img
-                      src={paretoMedianUrl}
-                      alt="Pareto median iterations vs failure rate"
-                      style={styles.plotImage}
-                    />
-                  </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={styles.mutedText}>No CCDF artifacts available.</p>
+              )}
+            </SectionCard>
+          </SectionCard>
+
+          <SectionCard
+            title="Outputs"
+            isOpen={showOutputsSection}
+            onToggle={() => setShowOutputsSection((v) => !v)}
+            description="Downloadable files generated by the experiment, including raw records, summary artifacts, and analysis outputs."
+          >
+            <SectionCard
+              title="Exported Outputs"
+              isOpen={showArtifacts}
+              onToggle={() => setShowArtifacts((v) => !v)}
+            >
+              <div style={styles.artifactsGrid}>
+                {renderArtifactLink("records.csv", result.records_csv)}
+                {renderArtifactLink("records.json", result.records_json)}
+                {renderArtifactLink("summary.json", result.summary_json)}
+                {renderArtifactLink("metadata.json", result.metadata_json)}
+                {renderArtifactLink(
+                  "comparison_summary.json",
+                  analytics?.comparison_summary
+                )}
+                {renderArtifactLink(
+                  "basin_entropy.json",
+                  analytics?.basin_entropy
+                )}
+                {renderArtifactLink(
+                  "basin_entropy_comparison.png",
+                  analytics?.basin_entropy_plot ||
+                    analytics?.basin_entropy_comparison_plot
+                )}
+                {paretoMeanUrl &&
+                  renderArtifactLink(
+                    "pareto_mean_vs_failure.png",
+                    analytics?.pareto?.mean_vs_failure
+                  )}
+                {paretoMedianUrl &&
+                  renderArtifactLink(
+                    "pareto_median_vs_failure.png",
+                    analytics?.pareto?.median_vs_failure
+                  )}
+                {basinMapUrl && (
+                  <a
+                    href={basinMapUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={styles.artifactLink}
+                  >
+                    basin_map.png
+                  </a>
                 )}
               </div>
-            ) : (
-              <p style={styles.mutedText}>No Pareto artifacts available.</p>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Basin Complexity Metrics"
-            isOpen={showBasinComplexity}
-            onToggle={() => setShowBasinComplexity((v) => !v)}
-          >
-            {clusterTol !== undefined && clusterTol !== null && (
-              <p style={styles.metaText}>
-                <b>Cluster tolerance:</b> {formatNumber(clusterTol)} (based on
-                sweep resolution)
-              </p>
-            )}
-
-            {entropyRows.length > 0 ? (
-              <div style={styles.tableWrap}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={styles.th}>Method</th>
-                      <th style={styles.th}>Entropy</th>
-                      <th style={styles.th}>Basins</th>
-                      <th style={styles.th}>Converged Runs</th>
-                      <th style={styles.th}>Cluster Tol</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {entropyRows.map((row) => (
-                      <tr key={`entropy-${row.method}`}>
-                        <td style={styles.td}>{row.method}</td>
-                        <td style={styles.td}>{formatEntropy(row.entropy)}</td>
-                        <td style={styles.td}>{formatNumber(row.num_basins)}</td>
-                        <td style={styles.td}>{formatNumber(row.total_converged)}</td>
-                        <td style={styles.td}>{formatNumber(row.cluster_tol)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p style={styles.mutedText}>No basin entropy metrics available.</p>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Basin Distribution Plots"
-            isOpen={showBasinDistribution}
-            onToggle={() => setShowBasinDistribution((v) => !v)}
-          >
-            {basinDistributionEntries.length > 0 ? (
-              <div style={styles.plotGrid}>
-                {basinDistributionEntries.map(([methodName, path]) => (
-                  <div key={`basin-${methodName}`} style={styles.plotCard}>
-                    <div style={styles.plotCardTitle}>{methodName}</div>
-                    <img
-                      src={toOutputUrl(path)}
-                      alt={`Basin distribution for ${methodName}`}
-                      style={styles.plotImage}
-                    />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p style={styles.mutedText}>
-                No basin distribution artifacts available.
-              </p>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Failure Region Plots"
-            isOpen={showFailureRegions}
-            onToggle={() => setShowFailureRegions((v) => !v)}
-          >
-            {failureRegionEntries.length > 0 ? (
-              <div style={styles.plotGrid}>
-                {failureRegionEntries.map(([methodName, path]) => (
-                  <div key={`fail-${methodName}`} style={styles.plotCard}>
-                    <div style={styles.plotCardTitle}>{methodName}</div>
-                    <img
-                      src={toOutputUrl(path)}
-                      alt={`Failure region for ${methodName}`}
-                      style={styles.plotImage}
-                    />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p style={styles.mutedText}>
-                No failure region artifacts available.
-              </p>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Iteration Histograms"
-            isOpen={showHistograms}
-            onToggle={() => setShowHistograms((v) => !v)}
-          >
-            {histogramEntries.length > 0 ? (
-              <div style={styles.plotGrid}>
-                {histogramEntries.map(([methodName, path]) => (
-                  <div key={`hist-${methodName}`} style={styles.plotCard}>
-                    <div style={styles.plotCardTitle}>{methodName}</div>
-                    <img
-                      src={toOutputUrl(path)}
-                      alt={`Iteration histogram for ${methodName}`}
-                      style={styles.plotImage}
-                    />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p style={styles.mutedText}>No histogram artifacts available.</p>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Iteration CCDFs"
-            isOpen={showCcdfs}
-            onToggle={() => setShowCcdfs((v) => !v)}
-          >
-            {ccdfEntries.length > 0 ? (
-              <div style={styles.plotGrid}>
-                {ccdfEntries.map(([methodName, path]) => (
-                  <div key={`ccdf-${methodName}`} style={styles.plotCard}>
-                    <div style={styles.plotCardTitle}>{methodName}</div>
-                    <img
-                      src={toOutputUrl(path)}
-                      alt={`Iteration CCDF for ${methodName}`}
-                      style={styles.plotImage}
-                    />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p style={styles.mutedText}>No CCDF artifacts available.</p>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Artifacts"
-            isOpen={showArtifacts}
-            onToggle={() => setShowArtifacts((v) => !v)}
-          >
-            <div style={styles.artifactsGrid}>
-              {renderArtifactLink("records.csv", result.records_csv)}
-              {renderArtifactLink("records.json", result.records_json)}
-              {renderArtifactLink("summary.json", result.summary_json)}
-              {renderArtifactLink("metadata.json", result.metadata_json)}
-              {renderArtifactLink(
-                "comparison_summary.json",
-                analytics?.comparison_summary
-              )}
-              {renderArtifactLink(
-                "basin_entropy.json",
-                analytics?.basin_entropy
-              )}
-              {paretoMeanUrl &&
-                renderArtifactLink(
-                  "pareto_mean_vs_failure.png",
-                  analytics?.pareto?.mean_vs_failure
-                )}
-              {paretoMedianUrl &&
-                renderArtifactLink(
-                  "pareto_median_vs_failure.png",
-                  analytics?.pareto?.median_vs_failure
-                )}
-              {basinMapUrl && (
-                <a
-                  href={basinMapUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={styles.artifactLink}
-                >
-                  basin_map.png
-                </a>
-              )}
-            </div>
+            </SectionCard>
           </SectionCard>
         </div>
       )}
@@ -1048,7 +1418,7 @@ function SummaryCard({ label, value }) {
   );
 }
 
-function SectionCard({ title, isOpen, onToggle, children }) {
+function SectionCard({ title, isOpen, onToggle, description, children }) {
   return (
     <div style={styles.section}>
       <div style={styles.card}>
@@ -1056,7 +1426,14 @@ function SectionCard({ title, isOpen, onToggle, children }) {
           <span>{title}</span>
           <span>{isOpen ? "▾" : "▸"}</span>
         </button>
-        {isOpen && <div style={{ marginTop: 12 }}>{children}</div>}
+        {isOpen && (
+          <div style={{ marginTop: 12 }}>
+            {description ? (
+              <p style={styles.sectionDescription}>{description}</p>
+            ) : null}
+            {children}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1138,6 +1515,14 @@ const styles = {
     fontWeight: 700,
   },
 
+  subsectionTitle: {
+    marginTop: 0,
+    marginBottom: 12,
+    fontSize: 18,
+    fontWeight: 700,
+    color: "#111827",
+  },
+
   sectionToggle: {
     width: "100%",
     border: "none",
@@ -1154,6 +1539,14 @@ const styles = {
     textAlign: "left",
   },
 
+  sectionDescription: {
+    marginTop: 4,
+    marginBottom: 16,
+    color: "#4b5563",
+    fontSize: 14,
+    lineHeight: 1.6,
+  },
+
   metaText: {
     marginTop: 0,
     marginBottom: 14,
@@ -1167,6 +1560,13 @@ const styles = {
     borderRadius: 16,
     padding: 20,
     boxShadow: "0 6px 18px rgba(15, 23, 42, 0.06)",
+  },
+
+  cardMuted: {
+    background: "#f8fafc",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: 16,
   },
 
   controlsGrid: {
@@ -1288,6 +1688,18 @@ const styles = {
     gap: 16,
   },
 
+  keyFindingsGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: 16,
+  },
+
+  interpretationGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+    gap: 16,
+  },
+
   summaryCard: {
     background: "#ffffff",
     border: "1px solid #e5e7eb",
@@ -1311,6 +1723,10 @@ const styles = {
     fontWeight: 700,
     lineHeight: 1.45,
     wordBreak: "break-word",
+  },
+
+  subsectionSpacer: {
+    marginTop: 18,
   },
 
   basinImage: {
@@ -1351,7 +1767,7 @@ const styles = {
 
   plotGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(480px, 1fr))",
     gap: 18,
   },
 
@@ -1380,6 +1796,24 @@ const styles = {
   mutedText: {
     color: "#6b7280",
     margin: 0,
+  },
+
+  insightList: {
+    margin: 0,
+    paddingLeft: 18,
+  },
+
+  insightItem: {
+    marginBottom: 10,
+    color: "#1f2937",
+    lineHeight: 1.55,
+  },
+
+  recommendationText: {
+    margin: 0,
+    color: "#1f2937",
+    lineHeight: 1.7,
+    fontSize: 15,
   },
 
   artifactsGrid: {

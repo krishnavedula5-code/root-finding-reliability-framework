@@ -6,10 +6,13 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
+
+
 import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+from collections import defaultdict
 
 
 _STATUS_COLOR = {
@@ -122,6 +125,75 @@ def _get_success_iterations(rows: list[dict], method: str) -> list[int]:
         if _is_converged(r)
     ]
     return sorted(success_iters)
+
+
+
+def plot_root_basin_distribution(rows, method, outdir, cluster_tol=1e-6):
+    """
+    Plot how many initial conditions converge to each root.
+
+    This reveals basin size dominance.
+    """
+
+    roots = []
+
+    for r in rows:
+        if r.get("method") != method:
+            continue
+
+        if r.get("status") != "converged":
+            continue
+
+        root = r.get("root")
+
+        if root is None:
+            continue
+
+        try:
+            roots.append(float(root))
+        except:
+            continue
+
+    if not roots:
+        return None
+
+    # cluster roots
+    clusters = defaultdict(int)
+
+    for root in roots:
+        assigned = False
+
+        for c in list(clusters.keys()):
+            if abs(root - c) <= cluster_tol:
+                clusters[c] += 1
+                assigned = True
+                break
+
+        if not assigned:
+            clusters[root] += 1
+
+    xs = list(clusters.keys())
+    ys = list(clusters.values())
+
+    xs_sorted = sorted(range(len(xs)), key=lambda i: xs[i])
+    xs = [xs[i] for i in xs_sorted]
+    ys = [ys[i] for i in xs_sorted]
+
+    plt.figure(figsize=(6,4))
+    plt.bar(range(len(xs)), ys)
+
+    plt.xticks(range(len(xs)), [f"{x:.4f}" for x in xs], rotation=45)
+    plt.xlabel("Root")
+    plt.ylabel("Number of Converged Initializations")
+    plt.title(f"Basin Size Distribution — {method}")
+
+    plt.tight_layout()
+
+    outpath = outdir / f"basin_root_distribution_{method}.png"
+    plt.savefig(outpath)
+    plt.close()
+
+    return outpath.name
 
 
 def save_iteration_histogram(rows: list[dict], method: str, outpath: str | Path) -> str:
@@ -530,6 +602,64 @@ def save_basin_entropy_summary(
     return payload
 
 
+def save_basin_entropy_comparison_plot(
+    entropy_data: dict,
+    outpath: str | Path,
+) -> str:
+    """
+    Save a global basin entropy comparison plot across methods.
+    x-axis: method
+    y-axis: entropy
+    """
+    outpath = Path(outpath)
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    rows = entropy_data.get("methods", []) or []
+    methods = [str(row.get("method", "")) for row in rows]
+    entropies = [_safe_float(row.get("entropy"), default=0.0) for row in rows]
+
+    fig, ax = plt.subplots(figsize=(8.5, 5))
+
+    if methods:
+        bars = ax.bar(methods, entropies)
+        ax.set_xlabel("Method")
+        ax.set_ylabel("Basin Entropy")
+        ax.set_title("Basin Entropy Comparison")
+        ax.grid(True, axis="y", alpha=0.3)
+
+        max_entropy = max(entropies) if entropies else 0.0
+        upper = max(0.1, max_entropy * 1.15 if max_entropy > 0 else 1.0)
+        ax.set_ylim(0, upper)
+
+        for bar, value in zip(bars, entropies):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                bar.get_height() + upper * 0.02,
+                f"{value:.4f}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
+
+        plt.setp(ax.get_xticklabels(), rotation=20, ha="right")
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No basin entropy data available",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_title("Basin Entropy Comparison")
+        ax.set_axis_off()
+
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return str(outpath)
+
+
 def save_basin_distribution_plot(
     entropy_row: dict,
     outpath: str | Path,
@@ -570,7 +700,6 @@ def save_basin_distribution_plot(
                 fontsize=9,
             )
 
-        # Put first basin at top
         ax.invert_yaxis()
         fig.subplots_adjust(left=0.22, bottom=0.16)
     else:
@@ -661,6 +790,9 @@ def generate_sweep_analytics(
         cluster_tol=cluster_tol,
     )
 
+    basin_entropy_plot_path = outdir / "basin_entropy_comparison.png"
+    save_basin_entropy_comparison_plot(entropy_data, basin_entropy_plot_path)
+
     basin_distribution = {}
     for entropy_row in entropy_data.get("methods", []):
         method = str(entropy_row.get("method", "")).strip()
@@ -669,6 +801,14 @@ def generate_sweep_analytics(
         dist_path = outdir / f"basin_distribution_{method}.png"
         save_basin_distribution_plot(entropy_row, dist_path)
         basin_distribution[method] = str(dist_path)
+
+    root_distribution = {}
+
+    for method in methods:
+        path = plot_root_basin_distribution(rows, method, outdir, cluster_tol)
+
+        if path:
+            root_distribution[method] = path
 
     return {
         "histogram": histogram,
@@ -680,7 +820,9 @@ def generate_sweep_analytics(
         },
         "basin_entropy": str(entropy_path),
         "basin_entropy_data": entropy_data,
+        "basin_entropy_plot": str(basin_entropy_plot_path),
         "basin_distribution": basin_distribution,
         "comparison_summary": str(summary_path),
         "comparison_summary_data": summary_data,
+        "basin_root_distribution": root_distribution,
     }

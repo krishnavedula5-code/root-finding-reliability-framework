@@ -294,6 +294,10 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
                 ),
                 "analytics": {
                     problem.problem_id: {
+                        "basin_root_distribution": {
+                            method: f"{analytics_base_url}/basin_root_distribution_{method}.png"
+                            for method in analytics.get("basin_root_distribution", {}).keys()
+                        },
                         "histogram": {
                             method: f"{analytics_base_url}/iterations_histogram_{method}.png"
                             for method in analytics.get("histogram", {}).keys()
@@ -318,6 +322,12 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
                         if analytics.get("basin_entropy")
                         else None,
                         "basin_entropy_data": analytics.get("basin_entropy_data"),
+                        "basin_entropy_plot": f"{analytics_base_url}/basin_entropy_comparison.png"
+                        if analytics.get("basin_entropy_plot")
+                        else None,
+                        "basin_entropy_comparison_plot": f"{analytics_base_url}/basin_entropy_comparison.png"
+                        if analytics.get("basin_entropy_plot")
+                        else None,
                         "basin_distribution": {
                             method: f"{analytics_base_url}/basin_distribution_{method}.png"
                             for method in analytics.get("basin_distribution", {}).keys()
