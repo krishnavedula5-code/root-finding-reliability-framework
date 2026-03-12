@@ -106,20 +106,26 @@ class SweepExperimentRequest(BaseModel):
     max_iter: int = 100
     boundary_method: str = "newton"
 
+    sampling_mode: str = "grid"
+    n_samples: Optional[int] = None
+    random_seed: Optional[int] = None
+    gaussian_mean: Optional[float] = None
+    gaussian_std: Optional[float] = None
+
     scalar_range: Optional[RangeSpec] = None
     secant_range: Optional[RangeSpec] = None
     bracket_search_range: Optional[RangeSpec] = None
 
     @model_validator(mode="after")
     def _validate_request(self):
-
         mode = str(self.problem_mode or "benchmark").lower().strip()
+        sampling_mode = str(self.sampling_mode or "grid").lower().strip()
 
         if mode not in {"benchmark", "custom"}:
             raise ValueError("problem_mode must be benchmark or custom")
 
-        if self.n_points < 2:
-            raise ValueError("n_points must be >= 2")
+        if sampling_mode not in {"grid", "uniform", "gaussian"}:
+            raise ValueError("sampling_mode must be grid, uniform, or gaussian")
 
         if self.tol <= 0:
             raise ValueError("tol must be positive")
@@ -129,6 +135,22 @@ class SweepExperimentRequest(BaseModel):
 
         if not self.methods:
             raise ValueError("At least one method must be selected")
+
+        if sampling_mode == "grid":
+            if self.n_points < 2:
+                raise ValueError("n_points must be >= 2 for grid mode")
+
+        elif sampling_mode == "uniform":
+            if self.n_samples is None or self.n_samples < 1:
+                raise ValueError("n_samples must be >= 1 for uniform mode")
+
+        elif sampling_mode == "gaussian":
+            if self.n_samples is None or self.n_samples < 1:
+                raise ValueError("n_samples must be >= 1 for gaussian mode")
+            if self.gaussian_mean is None:
+                raise ValueError("gaussian_mean is required for gaussian mode")
+            if self.gaussian_std is None or self.gaussian_std <= 0:
+                raise ValueError("gaussian_std must be > 0 for gaussian mode")
 
         if mode == "benchmark":
             if not self.problem_id:
@@ -146,7 +168,7 @@ class SweepExperimentRequest(BaseModel):
                 raise ValueError("x_min must be < x_max")
 
         return self
-
+    
 
 # ---------------------------------------------------------
 # Helpers

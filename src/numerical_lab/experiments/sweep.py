@@ -591,6 +591,11 @@ def run_problem_sweeps(
     scalar_points: int = 1000,
     secant_points: Optional[int] = None,
     bracket_points: Optional[int] = None,
+    scalar_initial_points: Optional[Sequence[float]] = None,
+    secant_initial_points: Optional[Sequence[float]] = None,
+    # bracket_initial_points reserved for future bracket-sampling support.
+    # Current implementation still uses sign-change bracket discovery on bracket_search_range.
+    bracket_initial_points: Optional[Sequence[float]] = None,
     tol: float = 1e-10,
     max_iter: int = 100,
 ) -> List[SweepRunRecord]:
@@ -603,9 +608,27 @@ def run_problem_sweeps(
     if bracket_points is None:
         bracket_points = scalar_points
 
+    if scalar_initial_points is None:
+        x_min, x_max = problem.scalar_range
+        scalar_initial_points = linspace(x_min, x_max, scalar_points)
+    else:
+        scalar_initial_points = [float(x) for x in scalar_initial_points]
+
+    if secant_initial_points is None:
+        s_min, s_max = problem.secant_range
+        secant_initial_points = linspace(s_min, s_max, secant_points + 1)
+    else:
+        secant_initial_points = [float(x) for x in secant_initial_points]
+    # bracket_initial_points reserved for future bracket-sampling support.
+    # Current implementation still uses sign-change bracket discovery on bracket_search_range.
+    if bracket_initial_points is not None:
+        bracket_initial_points = [float(x) for x in bracket_initial_points]
+
     f = compile_expr(problem.expr)
     df = compile_expr(problem.dexpr) if problem.dexpr else None
     discovered_clusters: Optional[List[RootCluster]] = None
+
+    root_discovery_n = max(len(scalar_initial_points), 2)
 
     if problem.dexpr is not None and any(
         m in methods_to_run for m in ("newton", "hybrid", "safeguarded_newton")
@@ -615,7 +638,7 @@ def run_problem_sweeps(
             dexpr=problem.dexpr,
             xmin=problem.scalar_range[0],
             xmax=problem.scalar_range[1],
-            n=scalar_points,
+            n=root_discovery_n,
             tol=tol,
             max_iter=max_iter,
             cluster_tol=1e-4,
@@ -625,10 +648,7 @@ def run_problem_sweeps(
     records: List[SweepRunRecord] = []
 
     if "newton" in methods_to_run:
-        x_min, x_max = problem.scalar_range
-        scalar_grid = linspace(x_min, x_max, scalar_points)
-
-        for i, x0 in enumerate(scalar_grid):
+        for i, x0 in enumerate(scalar_initial_points):
             if df is not None:
                 try:
                     res = run_newton(f, df, x0=x0, tol=tol, max_iter=max_iter)
@@ -656,11 +676,11 @@ def run_problem_sweeps(
                     )
 
     if "secant" in methods_to_run:
-        s_min, s_max = problem.secant_range
-        secant_grid = linspace(s_min, s_max, secant_points + 1)
+        if len(secant_initial_points) < 2:
+            raise ValueError("Secant requires at least two initial points.")
 
-        for i in range(secant_points):
-            x0, x1 = secant_grid[i], secant_grid[i + 1]
+        for i in range(len(secant_initial_points) - 1):
+            x0, x1 = secant_initial_points[i], secant_initial_points[i + 1]
             try:
                 res = run_secant(f, x0=x0, x1=x1, tol=tol, max_iter=max_iter)
                 records.append(
@@ -687,7 +707,10 @@ def run_problem_sweeps(
                         clusters=discovered_clusters,
                     )
                 )
-
+    # Note:
+    # Bracketing-based methods currently use sign-change bracket discovery over
+    # problem.bracket_search_range. They do not yet consume bracket_initial_points
+    # or Monte Carlo-style sampled bracket seeds.
     need_brackets = any(
         m in methods_to_run for m in ("bisection", "hybrid", "safeguarded_newton")
     )

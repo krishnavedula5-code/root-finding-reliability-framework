@@ -6,8 +6,6 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
-
-
 import matplotlib
 matplotlib.use("Agg")
 
@@ -75,6 +73,13 @@ def _extract_root(row: dict) -> float | None:
     return None
 
 
+def _get_method_rows(rows: list[dict], method: str) -> list[dict]:
+    return [
+        r for r in rows
+        if str(r.get("method", "")).strip().lower() == method.strip().lower()
+    ]
+
+
 def _percentile_nearest_rank(values: list[int], q: float) -> int:
     if not values:
         return 0
@@ -90,10 +95,7 @@ def _percentile_nearest_rank(values: list[int], q: float) -> int:
 
 
 def compute_method_summary(rows: list[dict], method: str) -> dict:
-    method_rows = [
-        r for r in rows
-        if str(r.get("method", "")).strip().lower() == method.strip().lower()
-    ]
+    method_rows = _get_method_rows(rows, method)
 
     total_runs = len(method_rows)
     converged_rows = [r for r in method_rows if _is_converged(r)]
@@ -115,10 +117,7 @@ def compute_method_summary(rows: list[dict], method: str) -> dict:
 
 
 def _get_success_iterations(rows: list[dict], method: str) -> list[int]:
-    method_rows = [
-        r for r in rows
-        if str(r.get("method", "")).strip().lower() == method.strip().lower()
-    ]
+    method_rows = _get_method_rows(rows, method)
     success_iters = [
         _extract_iterations(r)
         for r in method_rows
@@ -126,6 +125,193 @@ def _get_success_iterations(rows: list[dict], method: str) -> list[int]:
     ]
     return sorted(success_iters)
 
+
+def _cluster_roots(root_values: list[float], cluster_tol: float) -> list[list[float]]:
+    xs = [x for x in sorted(root_values) if math.isfinite(x)]
+    if not xs:
+        return []
+
+    clusters: list[list[float]] = [[xs[0]]]
+
+    for x in xs[1:]:
+        current_cluster = clusters[-1]
+        cluster_center = sum(current_cluster) / len(current_cluster)
+
+        if abs(x - cluster_center) <= cluster_tol:
+            current_cluster.append(x)
+        else:
+            clusters.append([x])
+
+    return clusters
+
+
+def _cluster_label(cluster: list[float]) -> str:
+    center = sum(cluster) / len(cluster)
+    return f"{center:.4f}"
+
+
+def compute_basin_entropy(rows: list[dict], method: str, cluster_tol: float) -> dict:
+    method_rows = _get_method_rows(rows, method)
+
+    converged_rows = [r for r in method_rows if _is_converged(r)]
+
+    root_values = []
+    for row in converged_rows:
+        root_value = _extract_root(row)
+        if root_value is None or not math.isfinite(root_value):
+            continue
+        root_values.append(root_value)
+
+    clusters = _cluster_roots(root_values, cluster_tol=cluster_tol)
+
+    if not clusters:
+        return {
+            "method": method,
+            "entropy": 0.0,
+            "num_basins": 0,
+            "total_converged": 0,
+            "cluster_tol": cluster_tol,
+            "basin_counts": {},
+            "basin_probabilities": {},
+        }
+
+    basin_counts = {
+        _cluster_label(cluster): len(cluster)
+        for cluster in clusters
+    }
+
+    total = sum(basin_counts.values())
+    basin_probabilities = {
+        label: count / total
+        for label, count in basin_counts.items()
+    }
+
+    entropy = -sum(
+        p * math.log(p)
+        for p in basin_probabilities.values()
+        if p > 0
+    )
+    entropy = max(0.0, entropy)
+
+    return {
+        "method": method,
+        "entropy": round(entropy, 8),
+        "num_basins": len(clusters),
+        "total_converged": total,
+        "cluster_tol": cluster_tol,
+        "basin_counts": basin_counts,
+        "basin_probabilities": basin_probabilities,
+    }
+
+
+def compute_root_basin_statistics(
+    rows: list[dict],
+    method: str,
+    cluster_tol: float,
+) -> dict:
+    method_rows = _get_method_rows(rows, method)
+    converged_rows = [r for r in method_rows if _is_converged(r)]
+
+    root_values = []
+    for row in converged_rows:
+        root_value = _extract_root(row)
+        if root_value is None or not math.isfinite(root_value):
+            continue
+        root_values.append(root_value)
+
+    clusters = _cluster_roots(root_values, cluster_tol=cluster_tol)
+
+    basin_counts = {
+        _cluster_label(cluster): len(cluster)
+        for cluster in clusters
+    }
+
+    total_runs = len(method_rows)
+    total_converged = len(converged_rows)
+    failure_count = total_runs - total_converged
+    failure_share = (failure_count / total_runs) if total_runs > 0 else 0.0
+
+    basin_probabilities = {}
+    if total_converged > 0:
+        basin_probabilities = {
+            root_label: count / total_converged
+            for root_label, count in basin_counts.items()
+        }
+
+    dominant_root = None
+    dominant_share = 0.0
+    if basin_probabilities:
+        dominant_root = max(basin_probabilities, key=basin_probabilities.get)
+        dominant_share = basin_probabilities[dominant_root]
+
+    per_root_rows = []
+    for root_label in sorted(basin_counts.keys(), key=lambda x: float(x)):
+        per_root_rows.append({
+            "method": method,
+            "root": root_label,
+            "basin_count": basin_counts[root_label],
+            "basin_share": basin_probabilities.get(root_label, 0.0),
+            "total_converged": total_converged,
+            "failure_count": failure_count,
+            "failure_share": failure_share,
+        })
+
+    return {
+        "method": method,
+        "cluster_tol": cluster_tol,
+        "total_runs": total_runs,
+        "total_converged": total_converged,
+        "failure_count": failure_count,
+        "failure_share": round(failure_share, 8),
+        "num_basins": len(basin_counts),
+        "dominant_root": dominant_root,
+        "dominant_share": round(dominant_share, 8) if dominant_root is not None else 0.0,
+        "basin_counts": basin_counts,
+        "basin_probabilities": basin_probabilities,
+        "per_root_rows": per_root_rows,
+    }
+
+
+def save_root_basin_statistics(
+    rows: list[dict],
+    methods: list[str],
+    outpath: str | Path,
+    cluster_tol: float,
+) -> dict:
+    outpath = Path(outpath)
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    method_rows = [
+        compute_root_basin_statistics(rows, method, cluster_tol=cluster_tol)
+        for method in methods
+    ]
+
+    per_root_table = []
+    summary_table = []
+
+    for method_payload in method_rows:
+        per_root_table.extend(method_payload.get("per_root_rows", []))
+        summary_table.append({
+            "method": method_payload["method"],
+            "num_basins": method_payload["num_basins"],
+            "dominant_root": method_payload["dominant_root"],
+            "dominant_share": method_payload["dominant_share"],
+            "total_converged": method_payload["total_converged"],
+            "failure_count": method_payload["failure_count"],
+            "failure_share": method_payload["failure_share"],
+        })
+
+    payload = {
+        "cluster_tol": cluster_tol,
+        "methods": method_rows,
+        "per_root_table": per_root_table,
+        "summary_table": summary_table,
+    }
+
+    with open(outpath, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+    return payload
 
 
 def plot_root_basin_distribution(rows, method, outdir, cluster_tol=1e-6):
@@ -151,13 +337,12 @@ def plot_root_basin_distribution(rows, method, outdir, cluster_tol=1e-6):
 
         try:
             roots.append(float(root))
-        except:
+        except Exception:
             continue
 
     if not roots:
         return None
 
-    # cluster roots
     clusters = defaultdict(int)
 
     for root in roots:
@@ -179,7 +364,7 @@ def plot_root_basin_distribution(rows, method, outdir, cluster_tol=1e-6):
     xs = [xs[i] for i in xs_sorted]
     ys = [ys[i] for i in xs_sorted]
 
-    plt.figure(figsize=(6,4))
+    plt.figure(figsize=(6, 4))
     plt.bar(range(len(xs)), ys)
 
     plt.xticks(range(len(xs)), [f"{x:.4f}" for x in xs], rotation=45)
@@ -267,10 +452,7 @@ def save_failure_region_plot(
     outpath = Path(outpath)
     outpath.parent.mkdir(parents=True, exist_ok=True)
 
-    method_rows = [
-        r for r in rows
-        if str(r.get("method", "")).strip().lower() == method_norm
-    ]
+    method_rows = _get_method_rows(rows, method_norm)
 
     xs = []
     ys = []
@@ -341,6 +523,157 @@ def save_failure_region_plot(
         ax.set_title(f"Failure Region — {method}")
         ax.set_axis_off()
 
+    fig.savefig(outpath, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return str(outpath)
+
+
+def save_initialization_histogram(
+    rows: list[dict],
+    method: str,
+    outpath: str | Path,
+) -> str:
+    outpath = Path(outpath)
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    method_rows = _get_method_rows(rows, method)
+    xs = []
+
+    for row in method_rows:
+        x0 = _extract_x0(row)
+        if x0 is not None and math.isfinite(x0):
+            xs.append(x0)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    if xs:
+        bins = min(30, max(5, int(math.sqrt(len(xs)))))
+        ax.hist(xs, bins=bins)
+        ax.set_xlabel("Initial guess x0")
+        ax.set_ylabel("Frequency")
+        ax.set_title(f"Initialization Histogram — {method}")
+        ax.grid(True, alpha=0.3)
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No initialization data available",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_title(f"Initialization Histogram — {method}")
+        ax.set_axis_off()
+
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return str(outpath)
+
+
+def save_initial_x_vs_root_plot(
+    rows: list[dict],
+    method: str,
+    outpath: str | Path,
+) -> str:
+    outpath = Path(outpath)
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    method_rows = _get_method_rows(rows, method)
+
+    xs = []
+    ys = []
+
+    for row in method_rows:
+        if not _is_converged(row):
+            continue
+
+        x0 = _extract_x0(row)
+        root = _extract_root(row)
+
+        if x0 is None or root is None:
+            continue
+        if not (math.isfinite(x0) and math.isfinite(root)):
+            continue
+
+        xs.append(x0)
+        ys.append(root)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    if xs:
+        ax.scatter(xs, ys, s=20, alpha=0.8)
+        ax.set_xlabel("Initial guess x0")
+        ax.set_ylabel("Converged root")
+        ax.set_title(f"Initial Guess vs Converged Root — {method}")
+        ax.grid(True, alpha=0.3)
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No converged root data available",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_title(f"Initial Guess vs Converged Root — {method}")
+        ax.set_axis_off()
+
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return str(outpath)
+
+
+def save_initial_x_vs_iterations_plot(
+    rows: list[dict],
+    method: str,
+    outpath: str | Path,
+) -> str:
+    outpath = Path(outpath)
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    method_rows = _get_method_rows(rows, method)
+
+    xs = []
+    ys = []
+    colors = []
+
+    for row in method_rows:
+        x0 = _extract_x0(row)
+        iterations = _extract_iterations(row)
+        status = _normalize_status(row)
+
+        if x0 is None:
+            continue
+        if not math.isfinite(x0):
+            continue
+
+        xs.append(x0)
+        ys.append(iterations)
+        colors.append(_STATUS_COLOR.get(status, "blue"))
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    if xs:
+        ax.scatter(xs, ys, c=colors, s=20, alpha=0.8)
+        ax.set_xlabel("Initial guess x0")
+        ax.set_ylabel("Iterations")
+        ax.set_title(f"Initial Guess vs Iterations — {method}")
+        ax.grid(True, alpha=0.3)
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No iteration data available",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_title(f"Initial Guess vs Iterations — {method}")
+        ax.set_axis_off()
+
+    fig.tight_layout()
     fig.savefig(outpath, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return str(outpath)
@@ -496,87 +829,6 @@ def save_pareto_median_vs_failure(summary_rows: list[dict], outpath: str | Path)
         title="Pareto Tradeoff — Median Iterations vs Failure Rate",
         xlabel="Median Iterations",
     )
-
-
-def _cluster_roots(root_values: list[float], cluster_tol: float) -> list[list[float]]:
-    xs = [x for x in sorted(root_values) if math.isfinite(x)]
-    if not xs:
-        return []
-
-    clusters: list[list[float]] = [[xs[0]]]
-
-    for x in xs[1:]:
-        current_cluster = clusters[-1]
-        cluster_center = sum(current_cluster) / len(current_cluster)
-
-        if abs(x - cluster_center) <= cluster_tol:
-            current_cluster.append(x)
-        else:
-            clusters.append([x])
-
-    return clusters
-
-
-def _cluster_label(cluster: list[float]) -> str:
-    center = sum(cluster) / len(cluster)
-    return f"{center:.4f}"
-
-
-def compute_basin_entropy(rows: list[dict], method: str, cluster_tol: float) -> dict:
-    method_rows = [
-        r for r in rows
-        if str(r.get("method", "")).strip().lower() == method.strip().lower()
-    ]
-
-    converged_rows = [r for r in method_rows if _is_converged(r)]
-
-    root_values = []
-    for row in converged_rows:
-        root_value = _extract_root(row)
-        if root_value is None or not math.isfinite(root_value):
-            continue
-        root_values.append(root_value)
-
-    clusters = _cluster_roots(root_values, cluster_tol=cluster_tol)
-
-    if not clusters:
-        return {
-            "method": method,
-            "entropy": 0.0,
-            "num_basins": 0,
-            "total_converged": 0,
-            "cluster_tol": cluster_tol,
-            "basin_counts": {},
-            "basin_probabilities": {},
-        }
-
-    basin_counts = {
-        _cluster_label(cluster): len(cluster)
-        for cluster in clusters
-    }
-
-    total = sum(basin_counts.values())
-    basin_probabilities = {
-        label: count / total
-        for label, count in basin_counts.items()
-    }
-
-    entropy = -sum(
-        p * math.log(p)
-        for p in basin_probabilities.values()
-        if p > 0
-    )
-    entropy = max(0.0, entropy)
-
-    return {
-        "method": method,
-        "entropy": round(entropy, 8),
-        "num_basins": len(clusters),
-        "total_converged": total,
-        "cluster_tol": cluster_tol,
-        "basin_counts": basin_counts,
-        "basin_probabilities": basin_probabilities,
-    }
 
 
 def save_basin_entropy_summary(
@@ -757,6 +1009,9 @@ def generate_sweep_analytics(
     histogram = {}
     ccdf = {}
     failure_region = {}
+    initialization_histogram = {}
+    initial_x_vs_root = {}
+    initial_x_vs_iterations = {}
 
     for method in methods:
         hist_path = outdir / f"iterations_histogram_{method}.png"
@@ -772,6 +1027,18 @@ def generate_sweep_analytics(
         saved_failure_path = save_failure_region_plot(rows, method, failure_path)
         if saved_failure_path is not None:
             failure_region[method] = saved_failure_path
+
+        init_hist_path = outdir / f"initialization_histogram_{method}.png"
+        init_root_path = outdir / f"initial_x_vs_root_{method}.png"
+        init_iter_path = outdir / f"initial_x_vs_iterations_{method}.png"
+
+        save_initialization_histogram(rows, method, init_hist_path)
+        save_initial_x_vs_root_plot(rows, method, init_root_path)
+        save_initial_x_vs_iterations_plot(rows, method, init_iter_path)
+
+        initialization_histogram[method] = str(init_hist_path)
+        initial_x_vs_root[method] = str(init_root_path)
+        initial_x_vs_iterations[method] = str(init_iter_path)
 
     summary_path = outdir / "comparison_summary.json"
     summary_data = save_comparison_summary(rows, methods, summary_path)
@@ -792,6 +1059,14 @@ def generate_sweep_analytics(
 
     basin_entropy_plot_path = outdir / "basin_entropy_comparison.png"
     save_basin_entropy_comparison_plot(entropy_data, basin_entropy_plot_path)
+
+    root_basin_stats_path = outdir / "root_basin_statistics.json"
+    root_basin_stats_data = save_root_basin_statistics(
+        rows,
+        methods,
+        root_basin_stats_path,
+        cluster_tol=cluster_tol,
+    )
 
     basin_distribution = {}
     for entropy_row in entropy_data.get("methods", []):
@@ -814,6 +1089,9 @@ def generate_sweep_analytics(
         "histogram": histogram,
         "ccdf": ccdf,
         "failure_region": failure_region,
+        "initialization_histogram": initialization_histogram,
+        "initial_x_vs_root": initial_x_vs_root,
+        "initial_x_vs_iterations": initial_x_vs_iterations,
         "pareto": {
             "mean_vs_failure": str(pareto_mean_path),
             "median_vs_failure": str(pareto_median_path),
@@ -825,4 +1103,6 @@ def generate_sweep_analytics(
         "comparison_summary": str(summary_path),
         "comparison_summary_data": summary_data,
         "basin_root_distribution": root_distribution,
+        "root_basin_statistics": str(root_basin_stats_path),
+        "root_basin_statistics_data": root_basin_stats_data,
     }

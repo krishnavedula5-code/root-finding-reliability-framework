@@ -19,6 +19,12 @@ export default function ExperimentsDashboard() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
 
+  const [samplingMode, setSamplingMode] = useState("grid");
+  const [nSamples, setNSamples] = useState(100);
+  const [randomSeed, setRandomSeed] = useState(42);
+  const [gaussianMean, setGaussianMean] = useState(0);
+  const [gaussianStd, setGaussianStd] = useState(1);
+
   const {
     backendStatus,
     statusMessage,
@@ -26,7 +32,7 @@ export default function ExperimentsDashboard() {
     wakeBackendOnly,
     runWithWarmup,
   } = useBackendWarmup({ autoPoll: true, pollIntervalMs: 25000 });
-
+  const [showInitializationSampling, setShowInitializationSampling] = useState(true);
   const [problemMode, setProblemMode] = useState("benchmark");
   const [problemId, setProblemId] = useState("p4");
 
@@ -103,10 +109,9 @@ export default function ExperimentsDashboard() {
     const numericNPoints = Number(nPoints);
     const numericTol = Number(tol);
     const numericMaxIter = Number(maxIter);
-
-    if (!Number.isFinite(numericNPoints) || numericNPoints < 2) {
-      throw new Error("Points must be at least 2.");
-    }
+    const numericNSamples = Number(nSamples);
+    const numericGaussianMean = Number(gaussianMean);
+    const numericGaussianStd = Number(gaussianStd);
 
     if (!Number.isFinite(numericTol) || numericTol <= 0) {
       throw new Error("Tolerance must be a positive number.");
@@ -114,6 +119,30 @@ export default function ExperimentsDashboard() {
 
     if (!Number.isFinite(numericMaxIter) || numericMaxIter < 1) {
       throw new Error("Max Iter must be at least 1.");
+    }
+
+    if (samplingMode === "grid") {
+      if (!Number.isFinite(numericNPoints) || numericNPoints < 2) {
+        throw new Error("Points must be at least 2 for grid mode.");
+      }
+    }
+
+    if (samplingMode === "uniform") {
+      if (!Number.isFinite(numericNSamples) || numericNSamples < 1) {
+        throw new Error("Number of samples must be at least 1 for uniform mode.");
+      }
+    }
+
+    if (samplingMode === "gaussian") {
+      if (!Number.isFinite(numericNSamples) || numericNSamples < 1) {
+        throw new Error("Number of samples must be at least 1 for gaussian mode.");
+      }
+      if (!Number.isFinite(numericGaussianMean)) {
+        throw new Error("Gaussian mean must be a valid number.");
+      }
+      if (!Number.isFinite(numericGaussianStd) || numericGaussianStd <= 0) {
+        throw new Error("Gaussian standard deviation must be positive.");
+      }
     }
 
     if (problemMode === "benchmark") {
@@ -145,6 +174,10 @@ export default function ExperimentsDashboard() {
     const numericNPoints = Number(nPoints);
     const numericTol = Number(tol);
     const numericMaxIter = Number(maxIter);
+    const numericNSamples = Number(nSamples);
+    const numericSeed = Number(randomSeed);
+    const numericGaussianMean = Number(gaussianMean);
+    const numericGaussianStd = Number(gaussianStd);
 
     if (problemMode === "custom") {
       const sMin = Number(scalarMin);
@@ -152,40 +185,76 @@ export default function ExperimentsDashboard() {
       const bMin = Number(bracketMin);
       const bMax = Number(bracketMax);
 
-      return {
+      const payload = {
         problem_mode: "custom",
         problem_id: null,
         expr: String(expr || "").trim(),
         dexpr: String(dexpr || "").trim(),
-        x_min: sMin,
-        x_max: sMax,
-        n_points: numericNPoints,
         methods: selectedMethods,
+        sampling_mode: samplingMode,
         tol: numericTol,
         max_iter: numericMaxIter,
         boundary_method: boundaryMethod,
         scalar_range: {
           x_min: sMin,
           x_max: sMax,
-          n_points: numericNPoints,
         },
         bracket_search_range: {
           x_min: bMin,
           x_max: bMax,
-          n_points: numericNPoints,
         },
       };
+
+      if (samplingMode === "grid") {
+        payload.n_points = numericNPoints;
+        payload.x_min = sMin;
+        payload.x_max = sMax;
+        payload.scalar_range.n_points = numericNPoints;
+        payload.bracket_search_range.n_points = numericNPoints;
+      }
+
+      if (samplingMode === "uniform") {
+        payload.n_samples = numericNSamples;
+        payload.random_seed = numericSeed;
+      }
+
+      if (samplingMode === "gaussian") {
+        payload.n_samples = numericNSamples;
+        payload.random_seed = numericSeed;
+        payload.gaussian_mean = numericGaussianMean;
+        payload.gaussian_std = numericGaussianStd;
+      }
+
+      return payload;
     }
 
-    return {
+    const payload = {
       problem_mode: "benchmark",
       problem_id: problemId,
       methods: selectedMethods,
-      n_points: numericNPoints,
+      sampling_mode: samplingMode,
       tol: numericTol,
       max_iter: numericMaxIter,
       boundary_method: boundaryMethod,
     };
+
+    if (samplingMode === "grid") {
+      payload.n_points = numericNPoints;
+    }
+
+    if (samplingMode === "uniform") {
+      payload.n_samples = numericNSamples;
+      payload.random_seed = numericSeed;
+    }
+
+    if (samplingMode === "gaussian") {
+      payload.n_samples = numericNSamples;
+      payload.random_seed = numericSeed;
+      payload.gaussian_mean = numericGaussianMean;
+      payload.gaussian_std = numericGaussianStd;
+    }
+
+    return payload;
   }
 
   async function runSweep() {
@@ -385,6 +454,18 @@ export default function ExperimentsDashboard() {
     )
   ).sort((a, b) => Number(a) - Number(b));
 
+  const initializationHistogramEntries = analytics?.initialization_histogram
+    ? Object.entries(analytics.initialization_histogram)
+    : [];
+
+  const initialXVsRootEntries = analytics?.initial_x_vs_root
+    ? Object.entries(analytics.initial_x_vs_root)
+    : [];
+
+  const initialXVsIterationsEntries = analytics?.initial_x_vs_iterations
+    ? Object.entries(analytics.initial_x_vs_iterations)
+    : [];
+
   const histogramEntries = analytics?.histogram
     ? Object.entries(analytics.histogram)
     : [];
@@ -438,7 +519,7 @@ export default function ExperimentsDashboard() {
           (a, b) => Number(a.entropy || 0) - Number(b.entropy || 0)
         )[0]
       : null;
-  
+
   function generateInsights() {
     const insights = [];
 
@@ -495,26 +576,31 @@ export default function ExperimentsDashboard() {
     return insights;
   }
 
- function suggestSolverChoice() {
+  function suggestSolverChoice() {
+    if (!comparisonRows.length) {
+      return "No solver recommendation available.";
+    }
 
-  if (!comparisonRows.length) {
-    return "No solver recommendation available.";
+    const reliable = bestSuccessMethod?.method;
+    const fastest = fastestMedianMethod?.method;
+    const stable = mostStableMethod?.method;
+
+    if (reliable && reliable === fastest) {
+      return `${prettyMethod(reliable)} is the best overall choice here because it achieves the highest success rate while also converging fastest on average.`;
+    }
+
+    if (reliable && reliable === stable) {
+      return `${prettyMethod(reliable)} provides the most reliable performance with the lowest observed failure risk.`;
+    }
+
+    return `${prettyMethod(reliable)} is the most reliable solver, while ${prettyMethod(fastest)} offers the fastest convergence. The best choice depends on whether robustness or speed is more important for this problem.`;
   }
 
-  const reliable = bestSuccessMethod?.method;
-  const fastest = fastestMedianMethod?.method;
-  const stable = mostStableMethod?.method;
-
-  if (reliable && reliable === fastest) {
-    return `${prettyMethod(reliable)} is the best overall choice here because it achieves the highest success rate while also converging fastest on average.`;
-  }
-
-  if (reliable && reliable === stable) {
-    return `${prettyMethod(reliable)} provides the most reliable performance with the lowest observed failure risk.`;
-  }
-
-  return `${prettyMethod(reliable)} is the most reliable solver, while ${prettyMethod(fastest)} offers the fastest convergence. The best choice depends on whether robustness or speed is more important for this problem.`;
-}
+  const effectiveSamplingMode = result?.sampling_mode || samplingMode;
+  const effectiveSampleCount =
+    effectiveSamplingMode === "grid"
+      ? result?.n_points ?? nPoints
+      : result?.n_samples ?? nSamples;
 
   return (
     <div style={styles.page}>
@@ -639,6 +725,20 @@ export default function ExperimentsDashboard() {
           )}
 
           <div>
+            <label style={styles.label}>Sampling Mode</label>
+            <select
+              value={samplingMode}
+              onChange={(e) => setSamplingMode(e.target.value)}
+              disabled={running || isPreparingRun}
+              style={styles.input}
+            >
+              <option value="grid">Grid</option>
+              <option value="uniform">Uniform Random</option>
+              <option value="gaussian">Gaussian</option>
+            </select>
+          </div>
+
+          <div>
             <label style={styles.label}>Boundary Method</label>
             <select
               value={boundaryMethod}
@@ -654,18 +754,98 @@ export default function ExperimentsDashboard() {
             </select>
           </div>
 
-          <div>
-            <label style={styles.label}>Points</label>
-            <input
-              type="number"
-              min="20"
-              max="5000"
-              value={nPoints}
-              onChange={(e) => setNPoints(e.target.value)}
-              disabled={running || isPreparingRun}
-              style={styles.input}
-            />
-          </div>
+          {samplingMode === "grid" && (
+            <div>
+              <label style={styles.label}>Points</label>
+              <input
+                type="number"
+                min="2"
+                value={nPoints}
+                onChange={(e) => setNPoints(Number(e.target.value))}
+                disabled={running || isPreparingRun}
+                style={styles.input}
+              />
+            </div>
+          )}
+
+          {samplingMode === "uniform" && (
+            <>
+              <div>
+                <label style={styles.label}>Number of Samples</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={nSamples}
+                  onChange={(e) => setNSamples(Number(e.target.value))}
+                  disabled={running || isPreparingRun}
+                  style={styles.input}
+                />
+              </div>
+
+              <div>
+                <label style={styles.label}>Random Seed</label>
+                <input
+                  type="number"
+                  value={randomSeed}
+                  onChange={(e) => setRandomSeed(Number(e.target.value))}
+                  disabled={running || isPreparingRun}
+                  style={styles.input}
+                />
+              </div>
+            </>
+          )}
+
+          {samplingMode === "gaussian" && (
+            <>
+              <div>
+                <label style={styles.label}>Number of Samples</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={nSamples}
+                  onChange={(e) => setNSamples(Number(e.target.value))}
+                  disabled={running || isPreparingRun}
+                  style={styles.input}
+                />
+              </div>
+
+              <div>
+                <label style={styles.label}>Random Seed</label>
+                <input
+                  type="number"
+                  value={randomSeed}
+                  onChange={(e) => setRandomSeed(Number(e.target.value))}
+                  disabled={running || isPreparingRun}
+                  style={styles.input}
+                />
+              </div>
+
+              <div>
+                <label style={styles.label}>Gaussian Mean</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={gaussianMean}
+                  onChange={(e) => setGaussianMean(Number(e.target.value))}
+                  disabled={running || isPreparingRun}
+                  style={styles.input}
+                />
+              </div>
+
+              <div>
+                <label style={styles.label}>Gaussian Std Dev</label>
+                <input
+                  type="number"
+                  step="any"
+                  min="0.0000001"
+                  value={gaussianStd}
+                  onChange={(e) => setGaussianStd(Number(e.target.value))}
+                  disabled={running || isPreparingRun}
+                  style={styles.input}
+                />
+              </div>
+            </>
+          )}
 
           <div>
             <label style={styles.label}>Tolerance</label>
@@ -835,10 +1015,27 @@ export default function ExperimentsDashboard() {
                 value={result.problem_id || analyticsKey}
               />
               <SummaryCard
+                label="Sampling Mode"
+                value={effectiveSamplingMode}
+              />
+              <SummaryCard
+                label={
+                  effectiveSamplingMode === "grid" ? "Points" : "Sample Count"
+                }
+                value={String(effectiveSampleCount)}
+              />
+              <SummaryCard
+                label="Random Seed"
+                value={
+                  effectiveSamplingMode === "grid"
+                    ? "-"
+                    : result?.random_seed ?? randomSeed
+                }
+              />
+              <SummaryCard
                 label="Boundary Method"
                 value={prettyMethod(boundaryMethod)}
               />
-              <SummaryCard label="Points" value={String(nPoints)} />
               <SummaryCard
                 label="Methods"
                 value={selectedMethods.map(prettyMethod).join(", ")}
@@ -1157,6 +1354,91 @@ export default function ExperimentsDashboard() {
           </SectionCard>
 
           <SectionCard
+            title="Initialization Sampling"
+            isOpen={showInitializationSampling}
+            onToggle={() => setShowInitializationSampling((v) => !v)}
+            description="Diagnostics showing where initial guesses were sampled and how they relate to convergence outcomes."
+          >
+            <SectionCard
+              title="Initialization Histograms"
+              isOpen={true}
+              onToggle={() => {}}
+            >
+              {initializationHistogramEntries.length > 0 ? (
+                <div style={styles.plotGrid}>
+                  {initializationHistogramEntries.map(([methodName, path]) => (
+                    <div key={`init-hist-${methodName}`} style={styles.plotCard}>
+                      <div style={styles.plotCardTitle}>{prettyMethod(methodName)}</div>
+                      <img
+                        src={toOutputUrl(path)}
+                        alt={`Initialization histogram for ${methodName}`}
+                        style={styles.plotImage}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={styles.mutedText}>No initialization histogram artifacts available.</p>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              title="Initial Guess vs Converged Root"
+              isOpen={true}
+              onToggle={() => {}}
+            >
+              {initialXVsRootEntries.length > 0 ? (
+                <div style={styles.plotGrid}>
+                  {initialXVsRootEntries.map(([methodName, path]) => (
+                    <div key={`init-root-${methodName}`} style={styles.plotCard}>
+                      <div style={styles.plotCardTitle}>{prettyMethod(methodName)}</div>
+                      <img
+                        src={toOutputUrl(path)}
+                        alt={`Initial guess vs converged root for ${methodName}`}
+                        style={styles.plotImage}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={styles.mutedText}>No initial guess vs root artifacts available.</p>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              title="Initial Guess vs Iterations"
+              isOpen={true}
+              onToggle={() => {}}
+            >
+              {initialXVsIterationsEntries.length > 0 ? (
+                <div style={styles.plotGrid}>
+                  {initialXVsIterationsEntries.map(([methodName, path]) => (
+                    <div key={`init-iter-${methodName}`} style={styles.plotCard}>
+                      <div style={styles.plotCardTitle}>{prettyMethod(methodName)}</div>
+                      <img
+                        src={toOutputUrl(path)}
+                        alt={`Initial guess vs iterations for ${methodName}`}
+                        style={styles.plotImage}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={styles.mutedText}>No initial guess vs iterations artifacts available.</p>
+              )}
+            </SectionCard>
+          </SectionCard>
+
+          <SectionCard
             title="Solver Stability"
             isOpen={showSolverStability}
             onToggle={() => setShowSolverStability((v) => !v)}
@@ -1367,6 +1649,10 @@ export default function ExperimentsDashboard() {
                 {renderArtifactLink("records.json", result.records_json)}
                 {renderArtifactLink("summary.json", result.summary_json)}
                 {renderArtifactLink("metadata.json", result.metadata_json)}
+                {renderArtifactLink(
+                  "root_basin_statistics.json",
+                  analytics?.root_basin_statistics
+                )}
                 {renderArtifactLink(
                   "comparison_summary.json",
                   analytics?.comparison_summary
