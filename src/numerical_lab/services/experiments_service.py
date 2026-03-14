@@ -305,6 +305,7 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             message="Sweep finished, saving outputs",
         )
 
+        
         sweep_path = _create_job_output_folder()
 
         records_csv_path = sweep_path / "records.csv"
