@@ -532,16 +532,15 @@ export default function ExperimentsDashboard() {
       </a>
     );
   }
+  
 
-  const analyticsCollection =
-  result?.artifacts?.analytics?.[result?.problem_id] || null;
   const analyticsKey =
     result?.problem_id ||
     (problemMode === "benchmark" ? problemId : "custom");
+
   const analytics =
-    analyticsCollection?.[analyticsKey] ||
-    analyticsCollection?.custom ||
-    Object.values(analyticsCollection || {})[0] ||
+    result?.artifacts?.analytics?.[analyticsKey] ||
+    result?.artifacts?.analytics?.custom ||
     null;
 
   const basinMapUrl =
