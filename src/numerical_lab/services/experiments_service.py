@@ -14,6 +14,12 @@ from numerical_lab.engine.controller import NumericalEngine
 
 from numerical_lab.services.sampling import generate_initial_points
 from numerical_lab.analytics.sweep_analytics import generate_sweep_analytics
+from numerical_lab.analytics.interpretation import (
+    build_interpretation_summary,
+    save_interpretation_summary,
+)
+from numerical_lab.analytics.failure_analysis import generate_failure_statistics
+from numerical_lab.analytics.problem_expectations import build_problem_expectations
 from numerical_lab.services.experiment_jobs import update_job
 from numerical_lab.experiments import sweep as sweep_module
 from numerical_lab.experiments import detect_basin_boundaries as boundary_module
@@ -299,10 +305,6 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             message="Sweep finished, saving outputs",
         )
 
-        # ------------------------------------------------------------------
-        # STEP 1 STRUCTURE STABILIZATION
-        # Root-level raw files + dedicated analytics/boundaries directories
-        # ------------------------------------------------------------------
         sweep_path = _create_job_output_folder()
 
         records_csv_path = sweep_path / "records.csv"
@@ -316,11 +318,9 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
         analytics_root_dir.mkdir(parents=True, exist_ok=True)
         boundaries_root_dir.mkdir(parents=True, exist_ok=True)
 
-        # Problem-specific analytics go under analytics/<problem_id>/
         analytics_dir = analytics_root_dir / problem.problem_id
         analytics_dir.mkdir(parents=True, exist_ok=True)
 
-        # Boundary artifacts go under boundaries/<method>/
         boundary_output_dir = boundaries_root_dir / boundary_method
         boundary_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -343,12 +343,80 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             sampling_mode=sampling_mode,
         )
 
+        problem_expectations = {}
+        problem_expectations_path = analytics_dir / "problem_expectations.json"
+        try:
+            problem_expectations = build_problem_expectations(
+                expr=problem.expr,
+                dexpr=problem.dexpr,
+                scalar_range=problem.scalar_range,
+                bracket_search_range=problem.bracket_search_range,
+                methods=methods_to_use,
+                sample_points=max(801, effective_count if effective_count > 0 else 801),
+            )
+            with open(problem_expectations_path, "w", encoding="utf-8") as fexp:
+                json.dump(problem_expectations, fexp, indent=2)
+            print("[debug] problem expectations saved:", problem_expectations_path)
+        except Exception as e:
+            print(f"[warn] problem expectation generation failed: {e}")
+            problem_expectations = {}
+
         analytics = generate_sweep_analytics(
             rows=[asdict(r) for r in records],
             methods=methods_to_use,
             outdir=analytics_dir,
             cluster_tol=cluster_tol,
         )
+        print("[debug] analytics keys:", list(analytics.keys()) if isinstance(analytics, dict) else type(analytics))
+        if isinstance(analytics, dict):
+            print("[debug] analytics root_coverage_data:", analytics.get("root_coverage_data"))
+            print("[debug] analytics root_basin_statistics_data:", analytics.get("root_basin_statistics_data"))
+            print("[debug] analytics comparison_summary_data:", analytics.get("comparison_summary_data"))
+
+        failure_analysis = {}
+        try:
+            failure_analysis = generate_failure_statistics(
+                records_csv=records_csv_path,
+                output_dir=analytics_dir,
+            )
+            print("[debug] failure analysis keys:", list(failure_analysis.keys()) if isinstance(failure_analysis, dict) else type(failure_analysis))
+        except Exception as e:
+            print(f"[warn] failure statistics generation failed: {e}")
+            failure_analysis = {}
+
+        interpretation_summary = {}
+        interpretation_saved_paths = {}
+        try:
+            print("[debug] building interpretation summary...")
+            print(
+                "[debug] problem_expectations keys:",
+                list(problem_expectations.keys()) if isinstance(problem_expectations, dict) else type(problem_expectations),
+            )
+            print(
+                "[debug] failure_analysis keys:",
+                list(failure_analysis.keys()) if isinstance(failure_analysis, dict) else type(failure_analysis),
+            )
+
+            interpretation_summary = build_interpretation_summary(
+                expectations=problem_expectations,
+                analytics=analytics,
+                failure_analysis=failure_analysis,
+            )
+
+            print(
+                "[debug] interpretation_summary keys:",
+                list(interpretation_summary.keys()) if isinstance(interpretation_summary, dict) else type(interpretation_summary),
+            )
+
+            interpretation_saved_paths = save_interpretation_summary(
+                output_dir=analytics_dir,
+                interpretation=interpretation_summary,
+            )
+            print("[debug] interpretation files saved:", interpretation_saved_paths)
+        except Exception as e:
+            print(f"[warn] interpretation summary generation failed: {e}")
+            interpretation_summary = {}
+            interpretation_saved_paths = {}
 
         adaptive_boundary_artifacts = _run_adaptive_refinement_safe(
             records=records,
@@ -626,6 +694,39 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
                             else None
                         ),
                         "comparison_summary_data": analytics.get("comparison_summary_data"),
+                        "problem_expectations": (
+                            f"{analytics_base_url}/problem_expectations.json"
+                            if problem_expectations
+                            else None
+                        ),
+                        "problem_expectations_data": problem_expectations,
+                        "interpretation_summary": (
+                            f"{analytics_base_url}/interpretation_summary.json"
+                            if interpretation_summary
+                            else None
+                        ),
+                        "interpretation_summary_text": (
+                            f"{analytics_base_url}/interpretation_summary.txt"
+                            if interpretation_summary
+                            else None
+                        ),
+                        "interpretation_summary_data": interpretation_summary,
+                        "failure_statistics": (
+                            f"{analytics_base_url}/failure_statistics.json"
+                            if failure_analysis
+                            else None
+                        ),
+                        "failure_statistics_data": failure_analysis,
+                        "failure_map": {
+                            method: f"{analytics_base_url}/{method_info.get('artifacts', {}).get('failure_map')}"
+                            for method, method_info in failure_analysis.get("methods", {}).items()
+                            if method_info.get("artifacts", {}).get("failure_map")
+                        },
+                        "failure_density": {
+                            method: f"{analytics_base_url}/{method_info.get('artifacts', {}).get('failure_density')}"
+                            for method, method_info in failure_analysis.get("methods", {}).items()
+                            if method_info.get("artifacts", {}).get("failure_density")
+                        },
                     }
                 },
             },

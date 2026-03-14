@@ -100,6 +100,22 @@ function PlotGrid({ entries, emptyText, altPrefix, prettyMethod }) {
   );
 }
 
+function BulletList({ items, emptyText = "No data available." }) {
+  if (!items || items.length === 0) {
+    return <p style={styles.mutedText}>{emptyText}</p>;
+  }
+
+  return (
+    <ul style={styles.insightList}>
+      {items.map((item, idx) => (
+        <li key={idx} style={styles.insightItem}>
+          {item}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function ExperimentsDashboard() {
   const [jobId, setJobId] = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
@@ -154,7 +170,9 @@ export default function ExperimentsDashboard() {
   const [showStatDiagnostics, setShowStatDiagnostics] = useState(true);
   const [showOutputsSection, setShowOutputsSection] = useState(false);
   const [showRootCoverage, setShowRootCoverage] = useState(true);
-  const [showRootBasinStatistics, setShowRootBasinStatistics] = useState(false);
+  const [showRootBasinStatistics, setShowRootBasinStatistics] =
+    useState(false);
+
   // Child sections
   const [showBoundaryAnalysis, setShowBoundaryAnalysis] = useState(true);
   const [showBasinMap, setShowBasinMap] = useState(true);
@@ -534,7 +552,6 @@ export default function ExperimentsDashboard() {
     );
   }
 
-
   const analyticsKey =
     result?.problem_id ||
     (problemMode === "benchmark" ? problemId : "custom");
@@ -543,6 +560,9 @@ export default function ExperimentsDashboard() {
     result?.artifacts?.analytics?.[analyticsKey] ||
     result?.artifacts?.analytics?.custom ||
     null;
+
+  const problemExpectations = analytics?.problem_expectations_data || null;
+  const interpretationSummary = analytics?.interpretation_summary_data || null;
 
   const basinMapUrl =
     toOutputUrl(result?.artifacts?.basin_map) ||
@@ -572,7 +592,9 @@ export default function ExperimentsDashboard() {
   const rootBasinStatisticsPlot = analytics?.root_basin_statistics_plot || {};
 
   const basinDistributionEntries = normalizePlotEntries(
-    analytics?.basin_distribution ? Object.entries(analytics.basin_distribution) : []
+    analytics?.basin_distribution
+      ? Object.entries(analytics.basin_distribution)
+      : []
   );
 
   const rootDistributionEntries = normalizePlotEntries(
@@ -667,6 +689,12 @@ export default function ExperimentsDashboard() {
         )[0]
       : null;
 
+  const overviewInterpretationNotes =
+    interpretationSummary?.top_summary?.slice(0, 3) || [];
+
+  const failureQuickNote =
+    interpretationSummary?.failure_interpretation?.global_notes?.[0] || null;
+
   function generateInsights() {
     const insights = [];
 
@@ -733,14 +761,14 @@ export default function ExperimentsDashboard() {
     const stable = mostStableMethod?.method;
 
     if (reliable && reliable === fastest) {
-      return `${prettyMethod(reliable)} is the best overall choice here because it achieves the highest success rate while also converging fastest on average.`;
+      return `${prettyMethod(reliable)} provides the best overall performance here because it combines the highest success rate with the fastest convergence.`;
     }
 
     if (reliable && reliable === stable) {
-      return `${prettyMethod(reliable)} provides the most reliable performance with the lowest observed failure risk.`;
+      return `${prettyMethod(reliable)} provides the strongest reliability profile with the lowest observed failure risk.`;
     }
 
-    return `${prettyMethod(reliable)} is the most reliable solver, while ${prettyMethod(fastest)} offers the fastest convergence. The best choice depends on whether robustness or speed is more important for this problem.`;
+    return `${prettyMethod(reliable)} is the most reliable solver here, while ${prettyMethod(fastest)} is the fastest. Choose based on whether robustness or speed matters more for this problem.`;
   }
 
   const effectiveSamplingMode = result?.sampling_mode || samplingMode;
@@ -1296,6 +1324,47 @@ export default function ExperimentsDashboard() {
               </div>
             </div>
 
+            {problemExpectations && (
+              <div style={styles.subsectionSpacer}>
+                <div style={styles.cardMuted}>
+                  <h3 style={styles.subsectionTitle}>
+                    Analytic Expectation Snapshot
+                  </h3>
+                  <div style={styles.summaryGrid}>
+                    <SummaryCard
+                      label="Root Candidates"
+                      value={
+                        problemExpectations.analytic_checks?.root_candidates
+                          ?.length
+                          ? problemExpectations.analytic_checks.root_candidates.join(
+                              ", "
+                            )
+                          : "None detected"
+                      }
+                    />
+                    <SummaryCard
+                      label="Sign-Change Accessible Roots"
+                      value={String(
+                        problemExpectations.analytic_checks
+                          ?.sign_change_interval_count ?? 0
+                      )}
+                    />
+                    <SummaryCard
+                      label="Critical Points"
+                      value={
+                        problemExpectations.analytic_checks?.critical_points
+                          ?.length
+                          ? problemExpectations.analytic_checks.critical_points.join(
+                              ", "
+                            )
+                          : "None detected"
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div style={styles.subsectionSpacer}>
               <div style={styles.cardMuted}>
                 <h3 style={styles.subsectionTitle}>Detected Real Roots</h3>
@@ -1353,6 +1422,20 @@ export default function ExperimentsDashboard() {
                 </div>
               </div>
             </div>
+
+            {overviewInterpretationNotes.length > 0 && (
+              <div style={styles.subsectionSpacer}>
+                <div style={styles.cardMuted}>
+                  <h3 style={styles.subsectionTitle}>
+                    High-Level Interpretation
+                  </h3>
+                  <BulletList
+                    items={overviewInterpretationNotes}
+                    emptyText="No high-level interpretation available."
+                  />
+                </div>
+              </div>
+            )}
           </SectionCard>
 
           <SectionCard
@@ -1451,14 +1534,34 @@ export default function ExperimentsDashboard() {
               onToggle={() => setShowBasinMap((v) => !v)}
             >
               {basinMapUrl ? (
-                <img
-                  src={basinMapUrl}
-                  alt="Basin map"
-                  style={styles.basinImage}
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
+                <>
+                  <img
+                    src={basinMapUrl}
+                    alt="Basin map"
+                    style={styles.basinImage}
+                    onError={(e) => {
+                      e.currentTarget.style.display = "none";
+                    }}
+                  />
+
+                  {problemExpectations?.section_expectations?.basin_map?.notes
+                    ?.length > 0 && (
+                    <div style={styles.subsectionSpacer}>
+                      <div style={styles.cardMuted}>
+                        <h3 style={styles.subsectionTitle}>
+                          Expected Basin Behavior
+                        </h3>
+                        <BulletList
+                          items={
+                            problemExpectations.section_expectations.basin_map
+                              .notes
+                          }
+                          emptyText="No basin expectations available."
+                        />
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
                 <p style={styles.mutedText}>No basin map available.</p>
               )}
@@ -1617,17 +1720,43 @@ export default function ExperimentsDashboard() {
             onToggle={() => setShowSolverStability((v) => !v)}
             description="Regions where solvers fail, diverge, or exhibit unstable convergence."
           >
+            {failureQuickNote && (
+              <div style={styles.cardMuted}>
+                <h3 style={styles.subsectionTitle}>Stability Summary</h3>
+                <p style={styles.recommendationText}>{failureQuickNote}</p>
+              </div>
+            )}
+
             <SectionCard
               title="Failure Region Plots"
               isOpen={showFailureRegions}
               onToggle={() => setShowFailureRegions((v) => !v)}
             >
-              <PlotGrid
-                entries={failureRegionEntries}
-                emptyText="No failure region artifacts available."
-                altPrefix="Failure region for"
-                prettyMethod={prettyMethod}
-              />
+              <>
+                <PlotGrid
+                  entries={failureRegionEntries}
+                  emptyText="No failure region artifacts available."
+                  altPrefix="Failure region for"
+                  prettyMethod={prettyMethod}
+                />
+
+                {interpretationSummary?.failure_interpretation && (
+                  <div style={styles.subsectionSpacer}>
+                    <div style={styles.cardMuted}>
+                      <h3 style={styles.subsectionTitle}>
+                        Failure Interpretation
+                      </h3>
+                      <BulletList
+                        items={
+                          interpretationSummary.failure_interpretation
+                            .global_notes || []
+                        }
+                        emptyText="No failure interpretation available."
+                      />
+                    </div>
+                  </div>
+                )}
+              </>
             </SectionCard>
           </SectionCard>
 
@@ -1637,11 +1766,10 @@ export default function ExperimentsDashboard() {
             onToggle={() => setShowStatDiagnostics((v) => !v)}
             description="Summarizes aggregate solver performance, convergence efficiency, failure behavior, and tail-risk across all sampled initializations."
           >
-            
             <SectionCard
               title="Root Coverage"
               isOpen={showRootCoverage}
-              onToggle={() => setShowRootCoverage(v => !v)}
+              onToggle={() => setShowRootCoverage((v) => !v)}
             >
               {rootCoverageData ? (
                 <>
@@ -1657,7 +1785,6 @@ export default function ExperimentsDashboard() {
                   </div>
 
                   <div style={{ marginTop: 16 }}>
-
                     <div style={styles.tableWrap}>
                       <table style={styles.table}>
                         <thead>
@@ -1691,30 +1818,90 @@ export default function ExperimentsDashboard() {
                     </div>
 
                     {rootCoveragePlot && (
-                    <div style={{ marginTop: 18 }}>
-                      <div style={styles.plotGrid}>
-                        <div style={styles.plotCard}>
-                          <div style={styles.plotCardTitle}>Root Coverage Comparison</div>
-                          <img
-                            src={toOutputUrl(rootCoveragePlot)}
-                            alt="Root coverage comparison"
-                            style={styles.plotImage}
+                      <div style={{ marginTop: 18 }}>
+                        <div style={styles.plotGrid}>
+                          <div style={styles.plotCard}>
+                            <div style={styles.plotCardTitle}>
+                              Root Coverage Comparison
+                            </div>
+                            <img
+                              src={toOutputUrl(rootCoveragePlot)}
+                              alt="Root coverage comparison"
+                              style={styles.plotImage}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {interpretationSummary?.root_coverage_interpretation && (
+                    <>
+                      <div style={styles.subsectionSpacer}>
+                        <div style={styles.cardMuted}>
+                          <h3 style={styles.subsectionTitle}>
+                            Coverage Interpretation
+                          </h3>
+                          <BulletList
+                            items={
+                              interpretationSummary.root_coverage_interpretation
+                                .comparison_notes || []
+                            }
+                            emptyText="No coverage interpretation available."
                           />
                         </div>
                       </div>
-                    </div>
+
+                      <div style={styles.subsectionSpacer}>
+                        <div style={styles.cardMuted}>
+                          <h3 style={styles.subsectionTitle}>
+                            Expectation vs Observation
+                          </h3>
+                          <div style={styles.tableWrap}>
+                            <table style={styles.table}>
+                              <thead>
+                                <tr>
+                                  <th style={styles.th}>Method</th>
+                                  <th style={styles.th}>Status</th>
+                                  <th style={styles.th}>Expected</th>
+                                  <th style={styles.th}>Observed</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {Object.entries(
+                                  interpretationSummary.root_coverage_interpretation
+                                    .per_method || {}
+                                ).map(([method, info]) => (
+                                  <tr key={method}>
+                                    <td style={styles.td}>
+                                      {prettyMethod(method)}
+                                    </td>
+                                    <td style={styles.td}>
+                                      <span style={styles.infoBadge}>
+                                        {info.status}
+                                      </span>
+                                    </td>
+                                    <td style={styles.td}>{info.expected}</td>
+                                    <td style={styles.td}>{info.observed}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    </>
                   )}
-                  </div>
                 </>
               ) : (
                 <p style={styles.mutedText}>No root coverage data available.</p>
               )}
             </SectionCard>
-            
+
             <SectionCard
               title="Root Basin Statistics"
               isOpen={showRootBasinStatistics}
-              onToggle={() => setShowRootBasinStatistics(v => !v)}
+              onToggle={() => setShowRootBasinStatistics((v) => !v)}
             >
               {rootBasinStatisticsData ? (
                 <>
@@ -1765,6 +1952,24 @@ export default function ExperimentsDashboard() {
                       )
                     )}
                   </div>
+
+                  {interpretationSummary?.root_basin_statistics_interpretation && (
+                    <div style={styles.subsectionSpacer}>
+                      <div style={styles.cardMuted}>
+                        <h3 style={styles.subsectionTitle}>
+                          Basin Statistics Interpretation
+                        </h3>
+                        <BulletList
+                          items={
+                            interpretationSummary
+                              .root_basin_statistics_interpretation
+                              .expectation_notes || []
+                          }
+                          emptyText="No basin-statistics interpretation available."
+                        />
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : (
                 <p style={styles.mutedText}>No root basin statistics available.</p>
@@ -1777,44 +1982,64 @@ export default function ExperimentsDashboard() {
               onToggle={() => setShowSolverComparison((v) => !v)}
             >
               {comparisonRows.length > 0 ? (
-                <div style={styles.tableWrap}>
-                  <table style={styles.table}>
-                    <thead>
-                      <tr>
-                        <th style={styles.th}>Method</th>
-                        <th style={styles.th}>Success Rate</th>
-                        <th style={styles.th}>Mean Iter</th>
-                        <th style={styles.th}>Median Iter</th>
-                        <th style={styles.th}>P95 Iter</th>
-                        <th style={styles.th}>Max Iter</th>
-                        <th style={styles.th}>Failure Count</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {comparisonRows.map((row) => (
-                        <tr key={prettyMethod(row.method)}>
-                          <td style={styles.td}>{prettyMethod(row.method)}</td>
-                          <td style={styles.td}>
-                            {formatPercent(row.success_rate)}
-                          </td>
-                          <td style={styles.td}>{formatMean(row.mean_iter)}</td>
-                          <td style={styles.td}>
-                            {formatNumber(row.median_iter)}
-                          </td>
-                          <td style={styles.td}>
-                            {formatNumber(row.p95_iter)}
-                          </td>
-                          <td style={styles.td}>
-                            {formatNumber(row.max_iter)}
-                          </td>
-                          <td style={styles.td}>
-                            {formatNumber(row.failure_count)}
-                          </td>
+                <>
+                  <div style={styles.tableWrap}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr>
+                          <th style={styles.th}>Method</th>
+                          <th style={styles.th}>Success Rate</th>
+                          <th style={styles.th}>Mean Iter</th>
+                          <th style={styles.th}>Median Iter</th>
+                          <th style={styles.th}>P95 Iter</th>
+                          <th style={styles.th}>Max Iter</th>
+                          <th style={styles.th}>Failure Count</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {comparisonRows.map((row) => (
+                          <tr key={prettyMethod(row.method)}>
+                            <td style={styles.td}>{prettyMethod(row.method)}</td>
+                            <td style={styles.td}>
+                              {formatPercent(row.success_rate)}
+                            </td>
+                            <td style={styles.td}>{formatMean(row.mean_iter)}</td>
+                            <td style={styles.td}>
+                              {formatNumber(row.median_iter)}
+                            </td>
+                            <td style={styles.td}>
+                              {formatNumber(row.p95_iter)}
+                            </td>
+                            <td style={styles.td}>
+                              {formatNumber(row.max_iter)}
+                            </td>
+                            <td style={styles.td}>
+                              {formatNumber(row.failure_count)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {interpretationSummary?.comparison_interpretation?.notes
+                    ?.length > 0 && (
+                    <div style={styles.subsectionSpacer}>
+                      <div style={styles.cardMuted}>
+                        <h3 style={styles.subsectionTitle}>
+                          Comparison Interpretation
+                        </h3>
+                        <BulletList
+                          items={
+                            interpretationSummary.comparison_interpretation
+                              .notes
+                          }
+                          emptyText="No comparison interpretation available."
+                        />
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
                 <p style={styles.mutedText}>
                   No comparison summary available.
@@ -1910,12 +2135,32 @@ export default function ExperimentsDashboard() {
                 {renderArtifactLink("summary.json", result.summary_json)}
                 {renderArtifactLink("metadata.json", result.metadata_json)}
                 {renderArtifactLink(
+                  "problem_expectations.json",
+                  analytics?.problem_expectations
+                )}
+                {renderArtifactLink(
+                  "interpretation_summary.json",
+                  analytics?.interpretation_summary
+                )}
+                {renderArtifactLink(
+                  "interpretation_summary.txt",
+                  analytics?.interpretation_summary_text
+                )}
+                {renderArtifactLink(
                   "root_basin_statistics.json",
                   analytics?.root_basin_statistics
                 )}
                 {renderArtifactLink(
                   "comparison_summary.json",
                   analytics?.comparison_summary
+                )}
+                {renderArtifactLink(
+                  "failure_statistics.json",
+                  analytics?.failure_statistics
+                )}
+                {renderArtifactLink(
+                  "root_coverage_summary.json",
+                  analytics?.root_coverage_summary
                 )}
                 {renderArtifactLink(
                   "basin_entropy.json",
@@ -2223,158 +2468,6 @@ const styles = {
 
   errorText: {
     margin: 0,
-    color: "#7f1d1d",
-  },
-
-  summaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 16,
-  },
-
-  keyFindingsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 16,
-  },
-
-  interpretationGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: 16,
-  },
-
-  summaryCard: {
-    background: "#ffffff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 16,
-    padding: 16,
-    boxShadow: "0 4px 14px rgba(15, 23, 42, 0.04)",
-    minHeight: 92,
-  },
-
-  summaryLabel: {
-    fontSize: 13,
-    color: "#6b7280",
-    marginBottom: 8,
-    fontWeight: 700,
-    textTransform: "uppercase",
-    letterSpacing: "0.03em",
-  },
-
-  summaryValue: {
-    fontSize: 16,
-    fontWeight: 700,
-    lineHeight: 1.45,
-    wordBreak: "break-word",
-  },
-
-  subsectionSpacer: {
-    marginTop: 18,
-  },
-
-  basinImage: {
-    display: "block",
-    width: "100%",
-    maxWidth: 980,
-    margin: "0 auto",
-    borderRadius: 12,
-    border: "1px solid #d1d5db",
-  },
-
-  tableWrap: {
-    overflowX: "auto",
-  },
-
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-    minWidth: 760,
-  },
-
-  th: {
-    textAlign: "left",
-    padding: "12px 14px",
-    background: "#f8fafc",
-    borderBottom: "1px solid #dbe2ea",
-    fontSize: 14,
-    fontWeight: 700,
-    color: "#374151",
-  },
-
-  td: {
-    textAlign: "left",
-    padding: "12px 14px",
-    borderBottom: "1px solid #eef2f7",
-    fontSize: 14,
-  },
-
-  plotGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(480px, 1fr))",
-    gap: 18,
-  },
-
-  plotCard: {
-    background: "#ffffff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    padding: 14,
-  },
-
-  plotCardTitle: {
-    fontSize: 15,
-    fontWeight: 700,
-    marginBottom: 10,
-    textTransform: "capitalize",
-  },
-
-  plotImage: {
-    width: "100%",
-    height: "auto",
-    display: "block",
-    borderRadius: 10,
-    border: "1px solid #d1d5db",
-  },
-
-  mutedText: {
-    color: "#6b7280",
-    margin: 0,
-  },
-
-  insightList: {
-    margin: 0,
-    paddingLeft: 18,
-  },
-
-  insightItem: {
-    marginBottom: 10,
-    color: "#1f2937",
-    lineHeight: 1.55,
-  },
-
-  recommendationText: {
-    margin: 0,
-    color: "#1f2937",
-    lineHeight: 1.7,
-    fontSize: 15,
-  },
-
-  artifactsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 12,
-  },
-
-  artifactLink: {
-    display: "block",
-    padding: "12px 14px",
-    borderRadius: 12,
-    border: "1px solid #dbeafe",
-    background: "#f8fbff",
-    color: "#1d4ed8",
-    textDecoration: "none",
-    fontWeight: 700,
-    wordBreak: "break-word",
+    color: "#7f1d",
   },
 };
