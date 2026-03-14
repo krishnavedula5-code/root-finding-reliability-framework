@@ -515,50 +515,7 @@ export default function Home() {
           flexWrap: "wrap",
         }}
       >
-        <button
-          onClick={() => navigate("/")}
-          style={{
-            border: "1px solid #222",
-            background: "#111",
-            color: "white",
-            padding: "6px 12px",
-            borderRadius: 8,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          Home
-        </button>
-
-        <button
-          onClick={() => navigate("/experiments")}
-          style={{
-            border: "1px solid #222",
-            background: "white",
-            color: "#111",
-            padding: "6px 12px",
-            borderRadius: 8,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          Experiments
-        </button>
-
-        <button
-          onClick={() => navigate("/experiment-jobs")}
-          style={{
-            border: "1px solid #222",
-            background: "white",
-            color: "#111",
-            padding: "6px 12px",
-            borderRadius: 8,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          Experiment Jobs
-        </button>
+ 
       </div>
 
       <h1 style={{ marginBottom: 6 }}>Numerical Lab UI</h1>

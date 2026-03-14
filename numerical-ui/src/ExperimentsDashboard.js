@@ -165,12 +165,17 @@ function PlotGrid({ entries, prettyMethodFn, altPrefix, emptyText }) {
   return (
     <div style={styles.plotGrid}>
       {normalized.map(([name, url]) => (
-        <PlotTile
-          key={name}
-          title={prettyMethodFn(name)}
-          url={url}
-          alt={`${altPrefix} ${name}`}
-        />
+        <div key={name} style={styles.plotTile}>
+          <div style={styles.plotTileTitle}>{prettyMethodFn(name)}</div>
+          <img
+            src={url}
+            alt={`${altPrefix} ${name}`}
+            style={styles.plotImage}
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+        </div>
       ))}
     </div>
   );
@@ -1882,12 +1887,12 @@ const styles = {
   },
 
   pageHeader: {
-    marginBottom: 18,
+    marginBottom: 20,
   },
 
   pageTitle: {
     margin: 0,
-    fontSize: 38,
+    fontSize: 34,
     fontWeight: 800,
     color: "#0f172a",
   },
@@ -1899,6 +1904,7 @@ const styles = {
     lineHeight: 1.65,
     color: "#475569",
   },
+
 
   setupCard: {
     background: "#ffffff",
@@ -2297,22 +2303,24 @@ const styles = {
 
   plotGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
-    gap: 16,
+    gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))",
+    gap: 18,
     alignItems: "start",
   },
 
   singlePlotWrap: {
     display: "grid",
-    gridTemplateColumns: "1fr",
+    gridTemplateColumns: "minmax(0, 1fr)",
+    gap: 18,
   },
 
   plotTile: {
     border: "1px solid #e2e8f0",
-    borderRadius: 14,
+    borderRadius: 16,
     background: "#ffffff",
     padding: 14,
-    minHeight: 100,
+    minHeight: 120,
+    boxShadow: "0 4px 14px rgba(15, 23, 42, 0.04)",
   },
 
   plotTileTitle: {
@@ -2320,18 +2328,19 @@ const styles = {
     fontWeight: 800,
     color: "#0f172a",
     marginBottom: 10,
-    textTransform: "capitalize",
+    lineHeight: 1.4,
   },
 
   plotImage: {
     display: "block",
     width: "100%",
-    height: "auto",
+    height: 320,
+    objectFit: "contain",
     borderRadius: 10,
     border: "1px solid #d1d5db",
-    objectFit: "contain",
     background: "#ffffff",
   },
+
 
   badge: {
     display: "inline-block",
