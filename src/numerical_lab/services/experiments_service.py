@@ -171,7 +171,8 @@ def _run_adaptive_refinement_safe(
                 continue
 
             try:
-                method_outdir = sweep_path / f"adaptive_boundaries_{method}"
+                outdir = sweep_path / "boundaries" / method
+                outdir.mkdir(parents=True, exist_ok=True)
 
                 adaptive_boundary_artifacts[method] = run_adaptive_boundary_refinement(
                     records=method_records,
@@ -180,7 +181,7 @@ def _run_adaptive_refinement_safe(
                     df=df,
                     method=method,
                     domain=(float(x_min), float(x_max)),
-                    output_dir=method_outdir,
+                    output_dir=outdir,
                     root_digits=8,
                     iteration_jump_threshold=8,
                     tol_x=1e-4,
@@ -298,12 +299,30 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             message="Sweep finished, saving outputs",
         )
 
+        # ------------------------------------------------------------------
+        # STEP 1 STRUCTURE STABILIZATION
+        # Root-level raw files + dedicated analytics/boundaries directories
+        # ------------------------------------------------------------------
         sweep_path = _create_job_output_folder()
 
         records_csv_path = sweep_path / "records.csv"
         records_json_path = sweep_path / "records.json"
         summary_json_path = sweep_path / "summary.json"
         metadata_json_path = sweep_path / "metadata.json"
+
+        analytics_root_dir = sweep_path / "analytics"
+        boundaries_root_dir = sweep_path / "boundaries"
+
+        analytics_root_dir.mkdir(parents=True, exist_ok=True)
+        boundaries_root_dir.mkdir(parents=True, exist_ok=True)
+
+        # Problem-specific analytics go under analytics/<problem_id>/
+        analytics_dir = analytics_root_dir / problem.problem_id
+        analytics_dir.mkdir(parents=True, exist_ok=True)
+
+        # Boundary artifacts go under boundaries/<method>/
+        boundary_output_dir = boundaries_root_dir / boundary_method
+        boundary_output_dir.mkdir(parents=True, exist_ok=True)
 
         sweep_module.records_to_csv(records, records_csv_path)
         sweep_module.records_to_json(records, records_json_path)
@@ -323,9 +342,7 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             tol=tol,
             sampling_mode=sampling_mode,
         )
-
-        analytics_dir = sweep_path / problem.problem_id
-        analytics_dir.mkdir(parents=True, exist_ok=True)
+        
 
         analytics = generate_sweep_analytics(
             rows=[asdict(r) for r in records],
@@ -334,6 +351,9 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             cluster_tol=cluster_tol,
         )
 
+        # NOTE:
+        # If _run_adaptive_refinement_safe currently writes directly under sweep_path,
+        # keep it for now to avoid breaking behavior. We will refactor that helper next.
         adaptive_boundary_artifacts = _run_adaptive_refinement_safe(
             records=records,
             methods=methods_requested,
@@ -342,6 +362,7 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
         )
 
         metadata = {
+            "experiment_type": "sweep",
             "problem_mode": problem_mode,
             "problem_id": problem.problem_id,
             "expr": problem.expr,
@@ -361,6 +382,16 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             "methods_used": methods_to_use,
             "cluster_tol": cluster_tol,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "artifact_layout": {
+                "records_csv": "records.csv",
+                "records_json": "records.json",
+                "summary_json": "summary.json",
+                "metadata_json": "metadata.json",
+                "analytics_root": "analytics",
+                "problem_analytics_dir": f"analytics/{problem.problem_id}",
+                "boundaries_root": "boundaries",
+                "boundary_dir": f"boundaries/{boundary_method}",
+            },
         }
         with open(metadata_json_path, "w", encoding="utf-8") as fmeta:
             json.dump(metadata, fmeta, indent=2)
@@ -442,7 +473,7 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             if matched:
                 boundary_payload = save_boundary_artifacts(
                     rows=matched,
-                    output_dir=analytics_dir,
+                    output_dir=boundary_output_dir,
                     method=boundary_method,
                 )
                 print("[debug] boundary_payload:", boundary_payload)
@@ -455,7 +486,8 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             fallback_basin_map = analytics_dir / "basin_map.png"
             basin_map_path = fallback_basin_map if fallback_basin_map.exists() else None
 
-        analytics_base_url = f"/outputs/sweeps/{sweep_path.name}/{problem.problem_id}"
+        analytics_base_url = f"/outputs/sweeps/{sweep_path.name}/analytics/{problem.problem_id}"
+        boundaries_base_url = f"/outputs/sweeps/{sweep_path.name}/boundaries/{boundary_method}"
 
         boundary_artifact_url = None
         boundary_summary_artifact_url = None
@@ -470,13 +502,13 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             overlay_path = boundary_payload.get("overlay_path")
 
             if boundaries_path:
-                boundary_artifact_url = f"{analytics_base_url}/{Path(boundaries_path).name}"
+                boundary_artifact_url = f"{boundaries_base_url}/{Path(boundaries_path).name}"
 
             if summary_path:
-                boundary_summary_artifact_url = f"{analytics_base_url}/{Path(summary_path).name}"
+                boundary_summary_artifact_url = f"{boundaries_base_url}/{Path(summary_path).name}"
 
             if boundary_payload.get("overlay_written") and overlay_path:
-                boundary_overlay_url = f"{analytics_base_url}/{Path(overlay_path).name}"
+                boundary_overlay_url = f"{boundaries_base_url}/{Path(overlay_path).name}"
 
         result = {
             "latest_sweep_dir": str(sweep_path).replace("\\", "/"),
@@ -484,6 +516,10 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             "records_json": f"/outputs/sweeps/{sweep_path.name}/records.json",
             "summary_json": f"/outputs/sweeps/{sweep_path.name}/summary.json",
             "metadata_json": f"/outputs/sweeps/{sweep_path.name}/metadata.json",
+            "analytics_root": f"/outputs/sweeps/{sweep_path.name}/analytics",
+            "problem_analytics_dir": analytics_base_url,
+            "boundaries_root": f"/outputs/sweeps/{sweep_path.name}/boundaries",
+            "boundary_dir": boundaries_base_url,
             "problem_mode": problem_mode,
             "problem_id": problem.problem_id,
             "sampling_mode": sampling_mode,
@@ -572,6 +608,10 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
                             if analytics.get("root_basin_statistics")
                             else None
                         ),
+                        "root_basin_statistics_plot": {
+                            method: f"{analytics_base_url}/root_basin_statistics_{method}.png"
+                            for method in analytics.get("root_basin_statistics_plot", {}).keys()
+                        },
                         "root_basin_statistics_data": analytics.get("root_basin_statistics_data"),
                         "comparison_summary": (
                             f"{analytics_base_url}/comparison_summary.json"

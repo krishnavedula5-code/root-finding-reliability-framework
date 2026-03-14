@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import matplotlib
-matplotlib.use("Agg")
-
 import csv
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
+
+import matplotlib
+matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
@@ -36,19 +36,100 @@ def parse_float(value: str | None, default: Optional[float] = None) -> Optional[
         return default
 
 
-def normalize_root_id(row: Dict[str, str]) -> str:
+def _extract_x0(row: Dict[str, str]) -> Optional[float]:
+    for key in ("x0", "initial_x", "initial_guess", "start"):
+        value = parse_float(row.get(key), None)
+        if value is not None:
+            return value
+    return None
+
+
+def _extract_root(row: Dict[str, str]) -> Optional[float]:
+    for key in ("root", "x_star", "solution", "final_x", "x"):
+        value = parse_float(row.get(key), None)
+        if value is not None:
+            return value
+    return None
+
+
+def _cluster_roots(root_values: List[float], cluster_tol: float) -> List[List[float]]:
+    xs = [x for x in sorted(root_values) if x is not None]
+    if not xs:
+        return []
+
+    clusters: List[List[float]] = [[xs[0]]]
+
+    for x in xs[1:]:
+        current_cluster = clusters[-1]
+        center = sum(current_cluster) / len(current_cluster)
+        if abs(x - center) <= cluster_tol:
+            current_cluster.append(x)
+        else:
+            clusters.append([x])
+
+    return clusters
+
+
+def _cluster_center(cluster: List[float]) -> float:
+    return sum(cluster) / len(cluster)
+
+
+def _cluster_label(cluster: List[float]) -> str:
+    return f"{_cluster_center(cluster):.6f}"
+
+
+def build_root_cluster_label_map(rows: List[Dict[str, str]], cluster_tol: float) -> Dict[float, str]:
+    """
+    Build a mapping raw_root_value -> clustered_root_label using converged rows.
+    """
+    root_values: List[float] = []
+
+    for row in rows:
+        status = (row.get("status") or "").strip().lower()
+        if status != "converged":
+            continue
+
+        root = _extract_root(row)
+        if root is None:
+            continue
+
+        root_values.append(root)
+
+    clusters = _cluster_roots(root_values, cluster_tol=cluster_tol)
+    label_map: Dict[float, str] = {}
+
+    for cluster in clusters:
+        label = _cluster_label(cluster)
+        for x in cluster:
+            label_map[x] = label
+
+    return label_map
+
+
+def normalize_root_id(row: Dict[str, str], root_label_map: Optional[Dict[float, str]] = None) -> str:
     """
     Return a basin label for plotting.
 
     Rules:
     - converged + valid root_id -> that root_id
+    - converged + no root_id but valid root -> clustered root label if possible
     - anything else -> FAIL
     """
     status = (row.get("status") or "").strip().lower()
     root_id = (row.get("root_id") or "").strip()
 
-    if status == "converged" and root_id:
-        return root_id
+    if status == "converged":
+        if root_id:
+            return root_id
+
+        root = _extract_root(row)
+        if root is not None and root_label_map is not None:
+            for raw_root, label in root_label_map.items():
+                if abs(raw_root - root) <= 1e-12:
+                    return label
+
+            # fallback if exact raw match is not found
+            return f"{root:.6f}"
 
     return "FAIL"
 
@@ -65,13 +146,22 @@ def extract_problem_method_rows(
     return out
 
 
+def _label_sort_key(label: str) -> Tuple[int, float, str]:
+    if label == "FAIL":
+        return (1, float("inf"), label)
+    try:
+        return (0, float(label), label)
+    except Exception:
+        return (0, float("inf"), label)
+
+
 def build_label_mapping(labels: List[str]) -> Tuple[Dict[str, int], List[str]]:
     """
-    Put normal root labels first, FAIL last.
+    Put numeric root labels first in ascending order, FAIL last.
     Example:
-        ['0', '1', 'FAIL'] -> {'0':0, '1':1, 'FAIL':2}
+        ['-2.000000', '1.000000', 'FAIL']
     """
-    unique = sorted(set(labels), key=lambda s: (s == "FAIL", s))
+    unique = sorted(set(labels), key=_label_sort_key)
     mapping = {label: i for i, label in enumerate(unique)}
     return mapping, unique
 
@@ -110,20 +200,26 @@ def make_cmap(n: int, has_fail: bool) -> Tuple[ListedColormap, BoundaryNorm]:
     return cmap, norm
 
 
-def infer_root_centers(rows: List[Dict[str, str]]) -> Dict[str, float]:
+def infer_root_centers(rows: List[Dict[str, str]], cluster_tol: float = 1e-6) -> Dict[str, float]:
     """
-    Infer representative root value for each root_id from converged rows.
-    Uses mean(root) per root_id.
+    Infer representative root value for each root label.
+    Uses:
+    - root_id if present
+    - otherwise clustered root label from root value
     """
+    root_label_map = build_root_cluster_label_map(rows, cluster_tol=cluster_tol)
     grouped: Dict[str, List[float]] = {}
 
     for r in rows:
         status = (r.get("status") or "").strip().lower()
-        root_id = (r.get("root_id") or "").strip()
-        root = parse_float(r.get("root"))
+        if status != "converged":
+            continue
 
-        if status == "converged" and root_id and root is not None:
-            grouped.setdefault(root_id, []).append(root)
+        label = normalize_root_id(r, root_label_map=root_label_map)
+        root = _extract_root(r)
+
+        if label != "FAIL" and root is not None:
+            grouped.setdefault(label, []).append(root)
 
     centers: Dict[str, float] = {}
     for rid, vals in grouped.items():
@@ -213,16 +309,20 @@ def plot_basin_map(
     problem_id: str,
     method: str,
     output_dir: Path,
+    cluster_tol: float = 1e-6,
 ) -> Path:
     if not rows:
         raise ValueError(f"No rows found for problem={problem_id}, method={method}")
 
+    root_label_map = build_root_cluster_label_map(rows, cluster_tol=cluster_tol)
+
     processed = []
     for r in rows:
-        x0 = parse_float(r.get("x0"), None)
+        x0 = _extract_x0(r)
         if x0 is None:
             continue
-        basin_label = normalize_root_id(r)
+
+        basin_label = normalize_root_id(r, root_label_map=root_label_map)
         processed.append((x0, basin_label))
 
     if not processed:
@@ -239,7 +339,7 @@ def plot_basin_map(
     has_fail = "FAIL" in ordered_labels
     cmap, norm = make_cmap(len(ordered_labels), has_fail=has_fail)
 
-    root_centers = infer_root_centers(rows)
+    root_centers = infer_root_centers(rows, cluster_tol=cluster_tol)
     display_labels = build_display_labels(ordered_labels, root_centers)
 
     data = [values]
@@ -262,7 +362,7 @@ def plot_basin_map(
     ax.set_yticks([])
     ax.set_ylabel("")
     ax.set_xlabel(r"Initial guess $x_0$")
-    ax.set_title(f"Basin map — {problem_id} — {method}")
+    ax.set_title(f"Root-Labeled Basin Map — {problem_id} — {method}")
 
     cbar = plt.colorbar(im, ax=ax, ticks=list(range(len(ordered_labels))))
     cbar.ax.set_yticklabels(display_labels)

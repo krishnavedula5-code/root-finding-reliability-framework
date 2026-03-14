@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import json
 import math
+from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import mean, median
 from typing import Any
+
+from numerical_lab.analytics.root_coverage import (
+    compute_root_coverage,
+    save_root_coverage_summary,
+    plot_root_coverage,
+)
 
 import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-from collections import defaultdict
 
 
 _STATUS_COLOR = {
@@ -64,7 +70,7 @@ def _extract_x0(row: dict) -> float | None:
 
 
 def _extract_root(row: dict) -> float | None:
-    for key in ("root", "x_star", "solution", "final_x", "x"):
+    for key in ("final_root", "root", "x_star", "solution", "final_x", "x"):
         if key in row:
             try:
                 return float(row[key])
@@ -145,12 +151,13 @@ def _cluster_roots(root_values: list[float], cluster_tol: float) -> list[list[fl
     return clusters
 
 
+def _cluster_center(cluster: list[float]) -> float:
+    return sum(cluster) / len(cluster)
+
+
 def _cluster_label(cluster: list[float]) -> str:
     center = _cluster_center(cluster)
     return f"{center:.6f}"
-
-def _cluster_center(cluster: list[float]) -> float:
-    return sum(cluster) / len(cluster)
 
 
 def _build_root_label_map(root_values: list[float], cluster_tol: float) -> dict[float, str]:
@@ -348,10 +355,56 @@ def save_root_basin_statistics(
     return payload
 
 
+def save_root_basin_statistics_plot(
+    root_basin_stats_data: dict,
+    method: str,
+    outpath: str | Path,
+) -> str | None:
+    """
+    Save an explicit root basin statistics plot for one method.
+    This is the publication-friendly artifact name.
+    """
+    outpath = Path(outpath)
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    method_payloads = root_basin_stats_data.get("methods", []) or []
+    method_payload = None
+    for payload in method_payloads:
+        if str(payload.get("method", "")).strip().lower() == method.strip().lower():
+            method_payload = payload
+            break
+
+    if not method_payload:
+        return None
+
+    basin_counts = method_payload.get("basin_counts", {}) or {}
+    if not basin_counts:
+        return None
+
+    labels = sorted(basin_counts.keys(), key=lambda x: float(x))
+    counts = [basin_counts[label] for label in labels]
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.bar(range(len(labels)), counts)
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=45)
+    ax.set_xlabel("Clustered Root")
+    ax.set_ylabel("Number of Converged Initializations")
+    ax.set_title(f"Root Basin Size Distribution — {method}")
+
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return str(outpath)
+
+
 def plot_root_basin_distribution(rows, method, outdir, cluster_tol=1e-6):
     """
     Plot how many initial conditions converge to each clustered root.
     This reveals basin size dominance.
+
+    Kept for backward compatibility with the older artifact name:
+    basin_root_distribution_<method>.png
     """
     root_values = []
 
@@ -391,7 +444,7 @@ def plot_root_basin_distribution(rows, method, outdir, cluster_tol=1e-6):
     plt.tight_layout()
 
     outpath = outdir / f"basin_root_distribution_{method}.png"
-    plt.savefig(outpath)
+    plt.savefig(outpath, dpi=150, bbox_inches="tight")
     plt.close()
 
     return outpath.name
@@ -1065,6 +1118,17 @@ def generate_sweep_analytics(
         cluster_tol=cluster_tol,
     )
 
+    root_basin_statistics_plot = {}
+    for method in methods:
+        plot_path = outdir / f"root_basin_statistics_{method}.png"
+        saved_plot = save_root_basin_statistics_plot(
+            root_basin_stats_data,
+            method,
+            plot_path,
+        )
+        if saved_plot is not None:
+            root_basin_statistics_plot[method] = saved_plot
+
     basin_distribution = {}
     for entropy_row in entropy_data.get("methods", []):
         method = str(entropy_row.get("method", "")).strip()
@@ -1075,12 +1139,20 @@ def generate_sweep_analytics(
         basin_distribution[method] = str(dist_path)
 
     root_distribution = {}
-
     for method in methods:
         path = plot_root_basin_distribution(rows, method, outdir, cluster_tol)
-
         if path:
             root_distribution[method] = path
+
+    # ---------------------------------------------------------
+    # Root coverage metric
+    # ---------------------------------------------------------
+    root_coverage_path = outdir / "root_coverage_summary.json"
+    root_coverage_plot_path = outdir / "root_coverage_comparison.png"
+
+    root_coverage_data = compute_root_coverage(rows, tol=cluster_tol)
+    save_root_coverage_summary(root_coverage_path, root_coverage_data)
+    plot_root_coverage(root_coverage_data, root_coverage_plot_path)
 
     return {
         "histogram": histogram,
@@ -1102,4 +1174,8 @@ def generate_sweep_analytics(
         "basin_root_distribution": root_distribution,
         "root_basin_statistics": str(root_basin_stats_path),
         "root_basin_statistics_data": root_basin_stats_data,
+        "root_basin_statistics_plot": root_basin_statistics_plot,
+        "root_coverage_summary": str(root_coverage_path),
+        "root_coverage_data": root_coverage_data,
+        "root_coverage_plot": str(root_coverage_plot_path),
     }
