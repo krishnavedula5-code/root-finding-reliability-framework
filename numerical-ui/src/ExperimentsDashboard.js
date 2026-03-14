@@ -153,7 +153,8 @@ export default function ExperimentsDashboard() {
   const [showSolverStability, setShowSolverStability] = useState(true);
   const [showStatDiagnostics, setShowStatDiagnostics] = useState(true);
   const [showOutputsSection, setShowOutputsSection] = useState(false);
-
+  const [showRootCoverage, setShowRootCoverage] = useState(true);
+  const [showRootBasinStatistics, setShowRootBasinStatistics] = useState(false);
   // Child sections
   const [showBoundaryAnalysis, setShowBoundaryAnalysis] = useState(true);
   const [showBasinMap, setShowBasinMap] = useState(true);
@@ -532,7 +533,7 @@ export default function ExperimentsDashboard() {
       </a>
     );
   }
-  
+
 
   const analyticsKey =
     result?.problem_id ||
@@ -557,8 +558,15 @@ export default function ExperimentsDashboard() {
   const paretoMeanUrl = toOutputUrl(analytics?.pareto?.mean_vs_failure);
   const paretoMedianUrl = toOutputUrl(analytics?.pareto?.median_vs_failure);
 
-  const rootCoverageData = analytics?.root_coverage_data || null;
-  const rootCoveragePlot = analytics?.root_coverage_plot || null;
+  const rootCoverageData =
+    analytics?.root_coverage_data ||
+    analytics?.root_coverage_summary_data ||
+    null;
+
+  const rootCoveragePlot =
+    analytics?.root_coverage_plot ||
+    analytics?.root_coverage_comparison ||
+    null;
 
   const rootBasinStatisticsData = analytics?.root_basin_statistics_data || null;
   const rootBasinStatisticsPlot = analytics?.root_basin_statistics_plot || {};
@@ -1632,8 +1640,8 @@ export default function ExperimentsDashboard() {
             
             <SectionCard
               title="Root Coverage"
-              isOpen={true}
-              onToggle={() => {}}
+              isOpen={showRootCoverage}
+              onToggle={() => setShowRootCoverage(v => !v)}
             >
               {rootCoverageData ? (
                 <>
@@ -1683,14 +1691,19 @@ export default function ExperimentsDashboard() {
                     </div>
 
                     {rootCoveragePlot && (
-                      <div style={{ marginTop: 18 }}>
-                        <img
-                          src={toOutputUrl(rootCoveragePlot)}
-                          alt="Root coverage comparison"
-                          style={styles.plotImage}
-                        />
+                    <div style={{ marginTop: 18 }}>
+                      <div style={styles.plotGrid}>
+                        <div style={styles.plotCard}>
+                          <div style={styles.plotCardTitle}>Root Coverage Comparison</div>
+                          <img
+                            src={toOutputUrl(rootCoveragePlot)}
+                            alt="Root coverage comparison"
+                            style={styles.plotImage}
+                          />
+                        </div>
                       </div>
-                    )}
+                    </div>
+                  )}
                   </div>
                 </>
               ) : (
@@ -1700,8 +1713,8 @@ export default function ExperimentsDashboard() {
             
             <SectionCard
               title="Root Basin Statistics"
-              isOpen={false}
-              onToggle={() => {}}
+              isOpen={showRootBasinStatistics}
+              onToggle={() => setShowRootBasinStatistics(v => !v)}
             >
               {rootBasinStatisticsData ? (
                 <>

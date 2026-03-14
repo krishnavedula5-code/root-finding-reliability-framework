@@ -342,7 +342,6 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             tol=tol,
             sampling_mode=sampling_mode,
         )
-        
 
         analytics = generate_sweep_analytics(
             rows=[asdict(r) for r in records],
@@ -351,9 +350,6 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
             cluster_tol=cluster_tol,
         )
 
-        # NOTE:
-        # If _run_adaptive_refinement_safe currently writes directly under sweep_path,
-        # keep it for now to avoid breaking behavior. We will refactor that helper next.
         adaptive_boundary_artifacts = _run_adaptive_refinement_safe(
             records=records,
             methods=methods_requested,
@@ -613,6 +609,17 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
                             for method in analytics.get("root_basin_statistics_plot", {}).keys()
                         },
                         "root_basin_statistics_data": analytics.get("root_basin_statistics_data"),
+                        "root_coverage_summary": (
+                            f"{analytics_base_url}/root_coverage_summary.json"
+                            if analytics.get("root_coverage_summary")
+                            else None
+                        ),
+                        "root_coverage_data": analytics.get("root_coverage_data"),
+                        "root_coverage_plot": (
+                            f"{analytics_base_url}/root_coverage_comparison.png"
+                            if analytics.get("root_coverage_plot")
+                            else None
+                        ),
                         "comparison_summary": (
                             f"{analytics_base_url}/comparison_summary.json"
                             if analytics.get("comparison_summary")
