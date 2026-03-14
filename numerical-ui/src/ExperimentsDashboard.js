@@ -533,7 +533,8 @@ export default function ExperimentsDashboard() {
     );
   }
 
-  const analyticsCollection = result?.artifacts?.analytics || {};
+  const analyticsCollection =
+  result?.artifacts?.analytics?.[result?.problem_id] || null;
   const analyticsKey =
     result?.problem_id ||
     (problemMode === "benchmark" ? problemId : "custom");
@@ -556,6 +557,12 @@ export default function ExperimentsDashboard() {
 
   const paretoMeanUrl = toOutputUrl(analytics?.pareto?.mean_vs_failure);
   const paretoMedianUrl = toOutputUrl(analytics?.pareto?.median_vs_failure);
+
+  const rootCoverageData = analytics?.root_coverage_data || null;
+  const rootCoveragePlot = analytics?.root_coverage_plot || null;
+
+  const rootBasinStatisticsData = analytics?.root_basin_statistics_data || null;
+  const rootBasinStatisticsPlot = analytics?.root_basin_statistics_plot || {};
 
   const basinDistributionEntries = normalizePlotEntries(
     analytics?.basin_distribution ? Object.entries(analytics.basin_distribution) : []
@@ -1623,6 +1630,135 @@ export default function ExperimentsDashboard() {
             onToggle={() => setShowStatDiagnostics((v) => !v)}
             description="Summarizes aggregate solver performance, convergence efficiency, failure behavior, and tail-risk across all sampled initializations."
           >
+            
+            <SectionCard
+              title="Root Coverage"
+              isOpen={true}
+              onToggle={() => {}}
+            >
+              {rootCoverageData ? (
+                <>
+                  <div style={styles.summaryGrid}>
+                    <SummaryCard
+                      label="Total Roots Detected"
+                      value={rootCoverageData.total_roots_detected}
+                    />
+                    <SummaryCard
+                      label="Global Roots"
+                      value={(rootCoverageData.global_roots || []).join(", ")}
+                    />
+                  </div>
+
+                  <div style={{ marginTop: 16 }}>
+
+                    <div style={styles.tableWrap}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={styles.th}>Solver</th>
+                            <th style={styles.th}>Roots Found</th>
+                            <th style={styles.th}>Total Roots</th>
+                            <th style={styles.th}>Coverage</th>
+                            <th style={styles.th}>Found Roots</th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {Object.entries(rootCoverageData.solvers || {}).map(
+                            ([solver, info]) => (
+                              <tr key={solver}>
+                                <td style={styles.td}>{prettyMethod(solver)}</td>
+                                <td style={styles.td}>{info.roots_found}</td>
+                                <td style={styles.td}>{info.total_roots}</td>
+                                <td style={styles.td}>
+                                  {formatPercent(info.coverage)}
+                                </td>
+                                <td style={styles.td}>
+                                  {(info.found_roots || []).join(", ")}
+                                </td>
+                              </tr>
+                            )
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {rootCoveragePlot && (
+                      <div style={{ marginTop: 18 }}>
+                        <img
+                          src={toOutputUrl(rootCoveragePlot)}
+                          alt="Root coverage comparison"
+                          style={styles.plotImage}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p style={styles.mutedText}>No root coverage data available.</p>
+              )}
+            </SectionCard>
+            
+            <SectionCard
+              title="Root Basin Statistics"
+              isOpen={false}
+              onToggle={() => {}}
+            >
+              {rootBasinStatisticsData ? (
+                <>
+                  <div style={styles.tableWrap}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr>
+                          <th style={styles.th}>Method</th>
+                          <th style={styles.th}>Basins</th>
+                          <th style={styles.th}>Dominant Root</th>
+                          <th style={styles.th}>Dominant Share</th>
+                          <th style={styles.th}>Total Converged</th>
+                          <th style={styles.th}>Failure Count</th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {rootBasinStatisticsData.summary_table.map((row) => (
+                          <tr key={row.method}>
+                            <td style={styles.td}>{prettyMethod(row.method)}</td>
+                            <td style={styles.td}>{row.num_basins}</td>
+                            <td style={styles.td}>{row.dominant_root}</td>
+                            <td style={styles.td}>
+                              {formatPercent(row.dominant_share)}
+                            </td>
+                            <td style={styles.td}>{row.total_converged}</td>
+                            <td style={styles.td}>{row.failure_count}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div style={{ marginTop: 20 }}>
+                    {Object.entries(rootBasinStatisticsPlot || {}).map(
+                      ([method, path]) => (
+                        <div key={method} style={{ marginBottom: 20 }}>
+                          <div style={styles.plotCardTitle}>
+                            Root Basin Size — {prettyMethod(method)}
+                          </div>
+
+                          <img
+                            src={toOutputUrl(path)}
+                            alt={`Root basin statistics ${method}`}
+                            style={styles.plotImage}
+                          />
+                        </div>
+                      )
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p style={styles.mutedText}>No root basin statistics available.</p>
+              )}
+            </SectionCard>
+
             <SectionCard
               title="Solver Comparison"
               isOpen={showSolverComparison}
