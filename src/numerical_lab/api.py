@@ -398,6 +398,7 @@ def create_sweep_experiment(req: SweepExperimentRequest):
         "message": job.message,
     }
 
+
 @app.post("/experiments/monte-carlo")
 def run_monte_carlo_experiment_api(payload: MonteCarloRequest):
     if not payload.problem_id:
@@ -489,6 +490,20 @@ def get_experiment_jobs():
         for j in jobs
     ]
 
+@app.get("/artifacts/json")
+def read_json_artifact(path: str):
+    p = Path(path)
+    if not p.exists():
+      raise HTTPException(status_code=404, detail="Artifact not found")
+    with open(p, "r", encoding="utf-8") as f:
+      return json.load(f)
+
+@app.get("/artifacts/file")
+def get_artifact_file(path: str):
+    p = Path(path)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(path=p)    
 
 @app.get("/experiments/jobs/{job_id}")
 def get_experiment_job(job_id: str):
