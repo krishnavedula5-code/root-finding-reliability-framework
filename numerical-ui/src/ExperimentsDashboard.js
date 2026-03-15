@@ -345,6 +345,61 @@ function getMcRootCoverage(row) {
   return null;
 }
 
+function MonteCarloRankingChart({ rows }) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return <p style={styles.emptyText}>No ranking data available.</p>;
+  }
+
+  return (
+    <div style={styles.rankingChartWrap}>
+      {rows.map((row, idx) => {
+        const success = Number(row.success_probability || 0);
+        const failure = Number(getMcFailureProbability(row) || 0);
+
+        return (
+          <div key={row.method} style={styles.rankingRow}>
+            <div style={styles.rankingLabelBlock}>
+              <div style={styles.rankingRank}>#{idx + 1}</div>
+              <div>
+                <div style={styles.rankingMethod}>{prettyMethod(row.method)}</div>
+                <div style={styles.rankingSubtext}>
+                  Mean iter: {formatMean(getMcMeanIterations(row))}
+                </div>
+              </div>
+            </div>
+
+            <div style={styles.stackedBarWrap}>
+              <div style={styles.stackedBarOuter}>
+                <div
+                  style={{
+                    ...styles.stackedBarSuccess,
+                    width: `${Math.max(0, Math.min(100, success * 100))}%`,
+                  }}
+                />
+                <div
+                  style={{
+                    ...styles.stackedBarFailure,
+                    width: `${Math.max(0, Math.min(100, failure * 100))}%`,
+                  }}
+                />
+              </div>
+
+              <div style={styles.stackedBarLabels}>
+                <span style={styles.successText}>
+                  Success {formatPercent(success)}
+                </span>
+                <span style={styles.failureText}>
+                  Failure {formatPercent(failure)}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ExperimentsDashboard() {
   const [jobId, setJobId] = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
@@ -431,6 +486,7 @@ export default function ExperimentsDashboard() {
   const [showExportedOutputs, setShowExportedOutputs] = useState(true);
 
   const [showMcOverview, setShowMcOverview] = useState(true);
+  const [showMcRankingChart, setShowMcRankingChart] = useState(true);
   const [showMcComparison, setShowMcComparison] = useState(true);
   const [showMcInterpretation, setShowMcInterpretation] = useState(true);
   const [showMcArtifacts, setShowMcArtifacts] = useState(true);
@@ -1185,6 +1241,16 @@ function normalizeMonteCarloRows(data) {
 }
 
   const mcMethodRows = normalizeMonteCarloRows(mcSummaryData);
+  const mcRankingRows = [...mcMethodRows].sort((a, b) => {
+    const successDiff =
+      Number(b.success_probability || 0) - Number(a.success_probability || 0);
+
+    if (Math.abs(successDiff) > 1e-12) {
+      return successDiff;
+    }
+
+    return Number(getMcMeanIterations(a) || Infinity) - Number(getMcMeanIterations(b) || Infinity);
+  });
 
   const mcOverviewItems = [
     { label: "Problem Mode", value: result?.problem_mode || problemMode },
@@ -1845,6 +1911,15 @@ function normalizeMonteCarloRows(data) {
                 <div style={styles.blockSpacer}>
                   <MonteCarloSummaryCards rows={mcMethodRows} />
                 </div>
+              </SectionCard>
+
+              <SectionCard
+                title="Solver Reliability Ranking"
+                isOpen={showMcRankingChart}
+                onToggle={() => setShowMcRankingChart((v) => !v)}
+                description="Methods ranked by Monte Carlo success probability, with stacked success/failure bars and speed tie-breaking."
+              >
+                <MonteCarloRankingChart rows={mcRankingRows} />
               </SectionCard>
 
               <SectionCard
@@ -2749,6 +2824,118 @@ const styles = {
     color: "#0f172a",
   },
 
+  rankingChartWrap: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+  },
+
+  rankingRow: {
+    display: "grid",
+    gridTemplateColumns: "260px minmax(220px, 1fr)",
+    gap: 18,
+    alignItems: "center",
+  },
+
+  rankingLabelBlock: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    minWidth: 0,
+  },
+
+  rankingRank: {
+    minWidth: 34,
+    height: 34,
+    borderRadius: 999,
+    background: "#eff6ff",
+    border: "1px solid #bfdbfe",
+    color: "#1d4ed8",
+    fontWeight: 800,
+    fontSize: 13,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  rankingMethod: {
+    fontSize: 15,
+    fontWeight: 700,
+    color: "#0f172a",
+    lineHeight: 1.4,
+  },
+
+  rankingSubtext: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 4,
+  },
+
+  stackedBarWrap: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+
+  stackedBarOuter: {
+    width: "100%",
+    height: 18,
+    borderRadius: 999,
+    background: "#e2e8f0",
+    overflow: "hidden",
+    display: "flex",
+  },
+
+  stackedBarSuccess: {
+    height: "100%",
+    background: "#16a34a",
+  },
+
+  stackedBarFailure: {
+    height: "100%",
+    background: "#dc2626",
+  },
+
+  stackedBarLabels: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+
+  successText: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#166534",
+  },
+
+  failureText: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#991b1b",
+  },
+
+  rankingBarOuter: {
+    width: "100%",
+    height: 16,
+    borderRadius: 999,
+    background: "#e2e8f0",
+    overflow: "hidden",
+  },
+
+  rankingBarInner: {
+    height: "100%",
+    borderRadius: 999,
+    background: "#2563eb",
+    transition: "width 0.25s ease",
+  },
+
+  rankingValue: {
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#0f172a",
+    textAlign: "right",
+  },
   pageHeader: {
     marginBottom: 20,
   },
