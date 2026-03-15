@@ -52,6 +52,13 @@ function formatNumber(x) {
   return Number.isInteger(num) ? String(num) : num.toFixed(4);
 }
 
+function formatRootLabel(root) {
+  const x = Number(root);
+  if (!Number.isFinite(x)) return String(root);
+  const rounded = Number(x.toFixed(3));
+  return String(rounded);
+}
+
 function formatPercent(x) {
   const num = Number(x);
   if (!Number.isFinite(num)) return "-";
@@ -400,6 +407,438 @@ function MonteCarloRankingChart({ rows }) {
   );
 }
 
+function MonteCarloSpeedReliabilityChart({ rows }) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return <p style={styles.emptyText}>No speed–reliability data available.</p>;
+  }
+
+  const validRows = rows.filter(
+    (row) =>
+      Number.isFinite(Number(getMcMeanIterations(row))) &&
+      Number.isFinite(Number(row.success_probability))
+  );
+
+  if (validRows.length === 0) {
+    return <p style={styles.emptyText}>No valid speed–reliability data available.</p>;
+  }
+
+  const methodColors = {
+    newton: "#2563eb",
+    secant: "#dc2626",
+    bisection: "#16a34a",
+    hybrid: "#9333ea",
+    safeguarded_newton: "#ea580c",
+    brent: "#0891b2",
+  };
+
+  const xVals = validRows.map((row) => Number(getMcMeanIterations(row)));
+  const yVals = validRows.map((row) => Number(row.success_probability));
+
+  const rawMinX = Math.min(...xVals);
+  const rawMaxX = Math.max(...xVals);
+  const rawMinY = Math.min(...yVals);
+  const rawMaxY = Math.max(...yVals);
+
+  const xPad = Math.max(1.0, (rawMaxX - rawMinX) * 0.08);
+  const yPad = Math.max(0.0005, (rawMaxY - rawMinY) * 0.25);
+
+  const minX = rawMinX - xPad;
+  const maxX = rawMaxX + xPad;
+  const minY = Math.max(0, Math.min(rawMinY, 0.98) - yPad);
+  const maxY = Math.min(1.001, Math.max(rawMaxY, 1.0) + yPad);
+
+  const chartWidth = 920;
+  const chartHeight = 430;
+  const padLeft = 82;
+  const padRight = 170;
+  const padTop = 28;
+  const padBottom = 64;
+
+  const innerWidth = chartWidth - padLeft - padRight;
+  const innerHeight = chartHeight - padTop - padBottom;
+
+  function scaleX(x) {
+    if (maxX === minX) return padLeft + innerWidth / 2;
+    return padLeft + ((x - minX) / (maxX - minX)) * innerWidth;
+  }
+
+  function scaleY(y) {
+    if (maxY === minY) return padTop + innerHeight / 2;
+    return padTop + innerHeight - ((y - minY) / (maxY - minY)) * innerHeight;
+  }
+
+  const xTicks = 6;
+  const yTicks = 5;
+
+  const legendX = chartWidth - padRight + 18;
+  const legendY = 52;
+
+  return (
+    <div style={styles.scatterWrap}>
+      <svg
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        style={styles.scatterSvg}
+        role="img"
+        aria-label="Monte Carlo speed versus reliability scatter plot"
+      >
+        <rect
+          x="0"
+          y="0"
+          width={chartWidth}
+          height={chartHeight}
+          fill="#ffffff"
+          rx="16"
+        />
+
+        {/* Gridlines + Y ticks */}
+        {Array.from({ length: yTicks + 1 }).map((_, i) => {
+          const t = i / yTicks;
+          const y = padTop + innerHeight - t * innerHeight;
+          const value = minY + t * (maxY - minY);
+
+          return (
+            <g key={`y-${i}`}>
+              <line
+                x1={padLeft}
+                y1={y}
+                x2={padLeft + innerWidth}
+                y2={y}
+                stroke="#e2e8f0"
+                strokeWidth="1"
+              />
+              <text
+                x={padLeft - 12}
+                y={y + 4}
+                textAnchor="end"
+                fontSize="12"
+                fill="#475569"
+              >
+                {formatPercent(value)}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Gridlines + X ticks */}
+        {Array.from({ length: xTicks + 1 }).map((_, i) => {
+          const t = i / xTicks;
+          const x = padLeft + t * innerWidth;
+          const value = minX + t * (maxX - minX);
+
+          return (
+            <g key={`x-${i}`}>
+              <line
+                x1={x}
+                y1={padTop}
+                x2={x}
+                y2={padTop + innerHeight}
+                stroke="#f1f5f9"
+                strokeWidth="1"
+              />
+              <text
+                x={x}
+                y={padTop + innerHeight + 24}
+                textAnchor="middle"
+                fontSize="12"
+                fill="#475569"
+              >
+                {formatMean(value)}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Axes */}
+        <line
+          x1={padLeft}
+          y1={padTop}
+          x2={padLeft}
+          y2={padTop + innerHeight}
+          stroke="#334155"
+          strokeWidth="1.5"
+        />
+        <line
+          x1={padLeft}
+          y1={padTop + innerHeight}
+          x2={padLeft + innerWidth}
+          y2={padTop + innerHeight}
+          stroke="#334155"
+          strokeWidth="1.5"
+        />
+
+        {/* Axis labels */}
+        <text
+          x={padLeft + innerWidth / 2}
+          y={chartHeight - 16}
+          textAnchor="middle"
+          fontSize="13"
+          fill="#0f172a"
+          fontWeight="700"
+        >
+          Mean Iterations
+        </text>
+
+        <text
+          x="22"
+          y={padTop + innerHeight / 2}
+          textAnchor="middle"
+          fontSize="13"
+          fill="#0f172a"
+          fontWeight="700"
+          transform={`rotate(-90 22 ${padTop + innerHeight / 2})`}
+        >
+          Success Probability
+        </text>
+
+        {/* Points + labels */}
+        {validRows.map((row) => {
+          const baseX = scaleX(Number(getMcMeanIterations(row)));
+          const jitter = (row.method === "bisection") ? 6 : (row.method === "hybrid" ? -6 : 0);
+          const x = baseX + jitter;
+          const y = scaleY(Number(row.success_probability));
+          const color = methodColors[row.method] || "#2563eb";
+          
+          return (
+            <g key={row.method}>
+              <circle
+                cx={x}
+                cy={y}
+                r="8"
+                fill={color}
+                stroke="#ffffff"
+                strokeWidth="2.5"
+              />
+            </g>
+          );
+        })}
+
+        {/* Legend */}
+        <g>
+          <text
+            x={legendX}
+            y={legendY - 14}
+            fontSize="13"
+            fill="#0f172a"
+            fontWeight="700"
+          >
+            Methods
+          </text>
+
+          {validRows.map((row, idx) => {
+            const color = methodColors[row.method] || "#2563eb";
+            return (
+              <g key={`legend-${row.method}`}>
+                <circle
+                  cx={legendX + 8}
+                  cy={legendY + idx * 24}
+                  r="6"
+                  fill={color}
+                />
+                <text
+                  x={legendX + 22}
+                  y={legendY + idx * 24 + 4}
+                  fontSize="12"
+                  fill="#0f172a"
+                >
+                  {prettyMethod(row.method)}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+
+      <div style={styles.scatterCaption}>
+        Top-left indicates higher reliability with fewer iterations.
+      </div>
+    </div>
+  );
+}
+
+function getMcRootCounts(row) {
+  if (row && row.root_counts && typeof row.root_counts === "object") {
+    return row.root_counts;
+  }
+  return {};
+}
+
+function collectAllMcRoots(rows) {
+  const roots = new Set();
+
+  (rows || []).forEach((row) => {
+    Object.keys(getMcRootCounts(row)).forEach((root) => {
+      roots.add(formatRootLabel(root));
+    });
+  });
+
+  return Array.from(roots).sort((a, b) => Number(a) - Number(b));
+}
+
+function MonteCarloRootDistributionChart({ rows }) {
+  
+  function canonicalizeRootCounts(rootCounts) {
+    const grouped = {};
+
+    Object.entries(rootCounts || {}).forEach(([root, count]) => {
+      const label = formatRootLabel(root);
+      grouped[label] = (grouped[label] || 0) + Number(count || 0);
+    });
+
+    return grouped;
+  }
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return <p style={styles.emptyText}>No root distribution data available.</p>;
+  }
+
+  const allRoots = collectAllMcRoots(rows);
+
+  if (allRoots.length === 0) {
+    return <p style={styles.emptyText}>No root clusters found in Monte Carlo summary.</p>;
+  }
+
+  const rootColors = [
+    "#2563eb",
+    "#16a34a",
+    "#9333ea",
+    "#ea580c",
+    "#0891b2",
+    "#dc2626",
+    "#7c3aed",
+    "#0f766e",
+  ];
+
+  const rootColorMap = {};
+  allRoots.forEach((root, idx) => {
+    rootColorMap[root] = rootColors[idx % rootColors.length];
+  });
+
+  const sortedRows = [...rows].sort((a, b) => {
+    const sa = Number(a.success_probability || 0);
+    const sb = Number(b.success_probability || 0);
+    if (sb !== sa) return sb - sa;
+    return Number(getMcMeanIterations(a) || Infinity) - Number(getMcMeanIterations(b) || Infinity);
+  });
+
+  return (
+    <div style={styles.rootDistWrap}>
+      <div style={styles.rootDistLegend}>
+        {allRoots.map((root) => (
+          <div key={root} style={styles.rootLegendItem}>
+            <span
+              style={{
+                ...styles.rootLegendSwatch,
+                background: rootColorMap[root],
+              }}
+            />
+            <span style={styles.rootLegendText}>Root {formatRootLabel(root)}</span>
+          </div>
+        ))}
+
+        <div style={styles.rootLegendItem}>
+          <span
+            style={{
+              ...styles.rootLegendSwatch,
+              background: "#ef4444",
+            }}
+          />
+          <span style={styles.rootLegendText}>Failure</span>
+        </div>
+      </div>
+
+      <div style={styles.rootDistRows}>
+        {sortedRows.map((row) => {
+          const samples = Number(row.samples || 0);
+          const rootCounts = canonicalizeRootCounts(getMcRootCounts(row));
+          const failureCount = Number(row.failure_count || 0);
+
+          return (
+            <div key={row.method} style={styles.rootDistRow}>
+              <div style={styles.rootDistMethod}>
+                <div style={styles.rootDistMethodName}>{prettyMethod(row.method)}</div>
+                <div style={styles.rootDistMethodMeta}>
+                  Success {formatPercent(row.success_probability)} · Mean iter {formatMean(getMcMeanIterations(row))}
+                </div>
+              </div>
+
+              <div style={styles.rootDistBarWrap}>
+                <div style={styles.rootDistBar}>
+                  {allRoots.map((root) => {
+                    const count = Number(rootCounts[root] || 0);
+                    const pct = samples > 0 ? (count / samples) * 100 : 0;
+
+                    if (pct <= 0) return null;
+
+                    return (
+                      <div
+                        key={root}
+                        title={`Root ${formatRootLabel(root)}: ${pct.toFixed(1)}%`}
+                        style={{
+                          height: "100%",
+                          width: `${pct}%`,
+                          background: rootColorMap[root],
+                        }}
+                      />
+                    );
+                  })}
+
+                  {failureCount > 0 && samples > 0 ? (
+                    <div
+                      title={`Failure: ${((failureCount / samples) * 100).toFixed(1)}%`}
+                      style={{
+                        height: "100%",
+                        width: `${(failureCount / samples) * 100}%`,
+                        background: "#ef4444",
+                      }}
+                    />
+                  ) : null}
+                </div>
+
+                <div style={styles.rootDistLabels}>
+                  {allRoots.map((root) => {
+                    const count = Number(rootCounts[root] || 0);
+                    const pct = samples > 0 ? count / samples : 0;
+                    if (pct <= 0) return null;
+
+                    return (
+                      <span key={root} style={styles.rootDistLabel}>
+                        {formatRootLabel(root)}: {formatPercent(pct)}
+                      </span>
+                    );
+                  })}
+
+                  {failureCount > 0 && samples > 0 ? (
+                    <span style={styles.rootDistFailureLabel}>
+                      fail: {formatPercent(failureCount / samples)}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function computeMcRankingScore(row, minIter, maxIter) {
+  const success = Number(row?.success_probability || 0);
+  const meanIter = Number(getMcMeanIterations(row));
+
+  if (!Number.isFinite(meanIter)) {
+    return success - 0.01;
+  }
+
+  let normalizedIterations = 0;
+
+  if (Number.isFinite(minIter) && Number.isFinite(maxIter) && maxIter > minIter) {
+    normalizedIterations = (meanIter - minIter) / (maxIter - minIter);
+  }
+
+  return success - 0.01 * normalizedIterations;
+}
+
 export default function ExperimentsDashboard() {
   const [jobId, setJobId] = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
@@ -450,7 +889,7 @@ export default function ExperimentsDashboard() {
     tol: 1e-10,
     maxIter: 100,
     derivativeMode: "analytic",
-    clusterTol: 1e-4,
+    clusterTol: 1e-3,
   });
 
   const [mcSummaryData, setMcSummaryData] = useState(null);
@@ -487,6 +926,8 @@ export default function ExperimentsDashboard() {
 
   const [showMcOverview, setShowMcOverview] = useState(true);
   const [showMcRankingChart, setShowMcRankingChart] = useState(true);
+  const [showMcSpeedReliabilityChart, setShowMcSpeedReliabilityChart] = useState(true);
+  const [showMcRootDistributionChart, setShowMcRootDistributionChart] = useState(true);
   const [showMcComparison, setShowMcComparison] = useState(true);
   const [showMcInterpretation, setShowMcInterpretation] = useState(true);
   const [showMcArtifacts, setShowMcArtifacts] = useState(true);
@@ -778,7 +1219,7 @@ export default function ExperimentsDashboard() {
       problem_mode: problemMode,
       problem_id: problemMode === "benchmark" ? problemId : null,
       methods: selectedMethods,
-      distribution_type: mcConfig.distributionType,
+      distribution: mcConfig.distributionType,
       n_samples: Number(mcConfig.nSamples),
       random_seed: Number(mcConfig.randomSeed),
       tol: Number(mcConfig.tol),
@@ -1241,12 +1682,22 @@ function normalizeMonteCarloRows(data) {
 }
 
   const mcMethodRows = normalizeMonteCarloRows(mcSummaryData);
-  const mcRankingRows = [...mcMethodRows].sort((a, b) => {
-    const successDiff =
-      Number(b.success_probability || 0) - Number(a.success_probability || 0);
+  const mcMeanIterationValues = mcMethodRows
+    .map((row) => Number(getMcMeanIterations(row)))
+    .filter((x) => Number.isFinite(x));
 
-    if (Math.abs(successDiff) > 1e-12) {
-      return successDiff;
+  const mcMinIter =
+    mcMeanIterationValues.length > 0 ? Math.min(...mcMeanIterationValues) : 0;
+
+  const mcMaxIter =
+    mcMeanIterationValues.length > 0 ? Math.max(...mcMeanIterationValues) : 1;
+
+  const mcRankingRows = [...mcMethodRows].sort((a, b) => {
+    const scoreA = computeMcRankingScore(a, mcMinIter, mcMaxIter);
+    const scoreB = computeMcRankingScore(b, mcMinIter, mcMaxIter);
+
+    if (Math.abs(scoreB - scoreA) > 1e-12) {
+      return scoreB - scoreA;
     }
 
     return Number(getMcMeanIterations(a) || Infinity) - Number(getMcMeanIterations(b) || Infinity);
@@ -1914,12 +2365,30 @@ function normalizeMonteCarloRows(data) {
               </SectionCard>
 
               <SectionCard
+                title="Root Basin Probability Distribution"
+                isOpen={showMcRootDistributionChart}
+                onToggle={() => setShowMcRootDistributionChart((v) => !v)}
+                description="Stacked probability distribution of convergence across root clusters for each Monte Carlo solver."
+              >
+                <MonteCarloRootDistributionChart rows={mcMethodRows} />
+              </SectionCard>
+
+              <SectionCard
                 title="Solver Reliability Ranking"
                 isOpen={showMcRankingChart}
                 onToggle={() => setShowMcRankingChart((v) => !v)}
                 description="Methods ranked by Monte Carlo success probability, with stacked success/failure bars and speed tie-breaking."
               >
                 <MonteCarloRankingChart rows={mcRankingRows} />
+              </SectionCard>
+
+              <SectionCard
+                title="Speed vs Reliability"
+                isOpen={showMcSpeedReliabilityChart}
+                onToggle={() => setShowMcSpeedReliabilityChart((v) => !v)}
+                description="Scatter plot of mean iterations versus success probability for Monte Carlo solver comparison."
+              >
+                <MonteCarloSpeedReliabilityChart rows={mcMethodRows} />
               </SectionCard>
 
               <SectionCard
@@ -2936,6 +3405,124 @@ const styles = {
     color: "#0f172a",
     textAlign: "right",
   },
+
+  scatterWrap: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+
+  scatterSvg: {
+    display: "block",
+    width: "100%",
+    maxWidth: 980,
+    height: "auto",
+    border: "1px solid #e2e8f0",
+    borderRadius: 16,
+    background: "#ffffff",
+  },
+
+  scatterCaption: {
+    fontSize: 13,
+    color: "#64748b",
+    lineHeight: 1.5,
+  },
+
+  rootDistWrap: {
+  display: "flex",
+  flexDirection: "column",
+  gap: 18,
+},
+
+  rootDistLegend: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 14,
+    alignItems: "center",
+  },
+
+  rootLegendItem: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  rootLegendSwatch: {
+    width: 14,
+    height: 14,
+    borderRadius: 4,
+    display: "inline-block",
+  },
+
+  rootLegendText: {
+    fontSize: 13,
+    color: "#334155",
+    fontWeight: 600,
+  },
+
+  rootDistRows: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+  },
+
+  rootDistRow: {
+    display: "grid",
+    gridTemplateColumns: "220px minmax(240px, 1fr)",
+    gap: 18,
+    alignItems: "start",
+  },
+
+  rootDistMethod: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+
+  rootDistMethodName: {
+    fontSize: 15,
+    fontWeight: 800,
+    color: "#0f172a",
+  },
+
+  rootDistMethodMeta: {
+    fontSize: 12,
+    color: "#64748b",
+  },
+
+  rootDistBarWrap: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+
+  rootDistBar: {
+    width: "100%",
+    height: 20,
+    borderRadius: 999,
+    overflow: "hidden",
+    background: "#e2e8f0",
+    display: "flex",
+  },
+
+  rootDistLabels: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+
+  rootDistLabel: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#334155",
+  },
+
+  rootDistFailureLabel: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#991b1b",
+  },
+
   pageHeader: {
     marginBottom: 20,
   },

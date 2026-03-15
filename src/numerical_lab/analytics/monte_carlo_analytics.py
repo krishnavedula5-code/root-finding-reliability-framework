@@ -55,7 +55,7 @@ def _cluster_root_counts(rows: List[Dict[str, Any]], tol: float) -> Dict[str, in
 
     for cluster in _cluster_sorted_values(numeric_roots, tol):
         center = sum(cluster) / len(cluster)
-        label = f"{center:.12g}"
+        label = f"{round(center, 3):g}"
         clustered_counter[label] = len(cluster)
 
     for k, v in non_numeric_counter.items():
@@ -66,7 +66,7 @@ def _cluster_root_counts(rows: List[Dict[str, Any]], tol: float) -> Dict[str, in
 
 def summarize_monte_carlo_records(
     rows: List[Dict[str, Any]],
-    root_cluster_tol: float = 1e-6,
+    root_cluster_tol: float = 1e-3,
 ) -> Dict[str, Any]:
     """
     Build per-method Monte Carlo summary statistics.

@@ -194,6 +194,8 @@ def _build_interpretation(
     distribution: str,
     x_min: float,
     x_max: float,
+    gaussian_mean: float | None = None,
+    gaussian_std: float | None = None,
 ) -> Tuple[Dict[str, Any], str]:
     """
     Lightweight interpretation layer for Monte Carlo results.
@@ -205,9 +207,18 @@ def _build_interpretation(
 
     lines.append("Monte Carlo Reliability Interpretation")
     lines.append("=" * 40)
-    lines.append(
-        f"Sampling distribution: {distribution} over domain [{x_min}, {x_max}]"
-    )
+    print("DEBUG_build_interpretation:",distribution, gaussian_mean, gaussian_std)
+    distribution_normalized = str(distribution or "uniform").lower()
+
+    if distribution_normalized == "gaussian":
+        lines.append(
+            f"Sampling distribution: gaussian with mean={gaussian_mean}, std={gaussian_std}"
+        )
+    else:
+        lines.append(
+            f"Sampling distribution: uniform over domain [{x_min}, {x_max}]"
+        )
+
     lines.append("")
 
     for method in methods:
@@ -222,9 +233,15 @@ def _build_interpretation(
         report_counts = m.get("report_counts", {})
         stab_counts = m.get("stability_counts", {})
 
+        p_text = f"{p:.4f}" if p is not None else "nan"
+        ci_lo = ci[0] if len(ci) > 0 else None
+        ci_hi = ci[1] if len(ci) > 1 else None
+        ci_lo_text = f"{ci_lo:.4f}" if ci_lo is not None else "nan"
+        ci_hi_text = f"{ci_hi:.4f}" if ci_hi is not None else "nan"
+
         text = (
-            f"{method}: success probability = {p:.4f}, "
-            f"95% CI = [{ci[0]:.4f}, {ci[1]:.4f}], "
+            f"{method}: success probability = {p_text}, "
+            f"95% CI = [{ci_lo_text}, {ci_hi_text}], "
             f"root coverage count = {root_cov}."
         )
 
@@ -264,8 +281,10 @@ def _build_interpretation(
 
     return (
         {
-            "distribution": distribution,
+            "distribution": distribution_normalized,
             "domain": [x_min, x_max],
+            "gaussian_mean": gaussian_mean,
+            "gaussian_std": gaussian_std,
             "methods": per_method_json,
         },
         "\n".join(lines),
@@ -455,6 +474,8 @@ def run_monte_carlo_experiment(
         distribution=distribution,
         x_min=x_min,
         x_max=x_max,
+        gaussian_mean=gaussian_mean,
+        gaussian_std=gaussian_std,
     )
 
     metadata = {

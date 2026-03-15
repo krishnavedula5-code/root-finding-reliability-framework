@@ -115,7 +115,7 @@ def classify_convergence(result: SolverResult) -> ConvergenceReport:
         cls = "superlinear"
         notes.append(f"Observed order ≈ {p:.3f} (superlinear convergence).")
     elif 1.7 <= p < 2.3:
-        cls = "qudratic"
+        cls = "quadratic"
         notes.append(f"Observed order ≈ {p:.3f} (quadratic convergence).")
     else:
         cls = "super quadratic"
