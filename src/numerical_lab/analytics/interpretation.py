@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List
-
+from numerical_lab.analytics.audit_consistency import audit_consistency
 from numerical_lab.analytics.interpretation_confidence import (
     build_method_interpretation_confidence,
 )
@@ -409,7 +409,7 @@ def build_interpretation_summary(
         or "custom"
     ).strip().lower()
 
-    benchmark_id = metadata.get("benchmark_id")
+    benchmark_id = metadata.get("benchmark_id") or metadata.get("problem_id")
     benchmark_name = metadata.get("benchmark_name")
     benchmark_category = metadata.get("benchmark_category")
 
@@ -548,6 +548,52 @@ def build_interpretation_summary(
     comparison_notes = comparison.get("notes") or []
     top_summary.extend(comparison_notes[:3])
 
+    # ---------------------------------------------------------
+    # Audit layer integration
+    # ---------------------------------------------------------
+    audit_data = audit_consistency(
+        benchmark_id=benchmark_id,
+        benchmark_name=benchmark_name,
+        benchmark_category=benchmark_category,
+        known_roots=known_roots if isinstance(known_roots, list) else [],
+        comparison_summary_data=analytics.get("comparison_summary_data"),
+        root_coverage_data=analytics.get("root_coverage_data"),
+        root_basin_statistics_data=analytics.get("root_basin_statistics_data"),
+        basin_entropy_data=analytics.get("basin_entropy_data"),
+        failure_statistics_data=analytics.get("failure_statistics_data"),
+        interpretation_summary_data={
+            "problem_type": problem_type,
+            "benchmark_id": benchmark_id,
+            "benchmark_name": benchmark_name,
+            "benchmark_category": benchmark_category,
+            "derivative_mode": derivative_mode,
+            "top_summary": top_summary,
+            "root_coverage_interpretation": root_cov,
+            "failure_interpretation": failure_interp,
+            "newton_pathology_interpretation": newton_pathology_interp,
+            "root_basin_statistics_interpretation": basin_interp,
+            "comparison_interpretation": comparison,
+        },
+        problem_expectations_data=expectations,
+    )
+
+    audit_status = audit_data.get("status", "ok")
+    audit_summary = audit_data.get("summary", "")
+
+    if audit_status == "warning":
+        for issue in audit_data.get("issues", []):
+            if issue.get("code") == "analytic_observed_newton_mismatch":
+                top_summary.append(
+                    "Note: Analytic instability indicators for Newton methods were not observed empirically in this experiment; this suggests that the predicted pathology regions did not significantly affect convergence for the sampled initial conditions."
+                )
+
+    if audit_status == "ok":
+        top_summary.append(f"Consistency audit status: OK. {audit_summary}")
+    elif audit_status == "warning":
+        top_summary.append(f"Consistency audit status: WARNING. {audit_summary}")
+    else:
+        top_summary.append(f"Consistency audit status: SUSPICIOUS. {audit_summary}")
+
     return {
         "problem_type": problem_type,
         "benchmark_id": benchmark_id,
@@ -560,6 +606,7 @@ def build_interpretation_summary(
         "newton_pathology_interpretation": newton_pathology_interp,
         "root_basin_statistics_interpretation": basin_interp,
         "comparison_interpretation": comparison,
+        "audit_consistency": audit_data,
     }
 
 
@@ -574,9 +621,15 @@ def save_interpretation_summary(
     json_path = output_dir / "interpretation_summary.json"
     txt_path = output_dir / "interpretation_summary.txt"
 
+    # ---------------------------------------------------------
+    # Save main interpretation JSON
+    # ---------------------------------------------------------
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(interpretation, f, indent=2)
 
+    # ---------------------------------------------------------
+    # Save main interpretation TXT
+    # ---------------------------------------------------------
     lines: List[str] = []
     for line in interpretation.get("top_summary", []):
         lines.append(f"- {line}")
@@ -584,7 +637,46 @@ def save_interpretation_summary(
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines).strip() + "\n")
 
+    # ---------------------------------------------------------
+    # Audit layer saving (NEW)
+    # ---------------------------------------------------------
+    audit = interpretation.get("audit_consistency") or {}
+
+    audit_json_path = output_dir / "audit_consistency.json"
+    audit_txt_path = output_dir / "audit_consistency.txt"
+
+    # Save audit JSON
+    with open(audit_json_path, "w", encoding="utf-8") as f:
+        json.dump(audit, f, indent=2)
+
+    # Save audit TXT
+    audit_lines: List[str] = []
+
+    status = audit.get("status", "unknown")
+    summary = audit.get("summary", "")
+
+    audit_lines.append(f"Status: {status}")
+    audit_lines.append(f"Summary: {summary}")
+    audit_lines.append("")
+
+    issues = audit.get("issues", []) or []
+    if issues:
+        audit_lines.append("Issues:")
+        for issue in issues:
+            audit_lines.append(
+                f"- [{issue.get('severity', 'warning')}] "
+                f"{issue.get('code', 'unknown')}: "
+                f"{issue.get('message', '')}"
+            )
+    else:
+        audit_lines.append("No issues detected.")
+
+    with open(audit_txt_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(audit_lines).strip() + "\n")
+
     return {
         "json_path": str(json_path),
         "txt_path": str(txt_path),
+        "audit_json_path": str(audit_json_path),
+        "audit_txt_path": str(audit_txt_path),
     }

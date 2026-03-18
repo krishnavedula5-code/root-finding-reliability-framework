@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import mean, median
 from typing import Any
@@ -87,7 +86,7 @@ def _extract_root(row: dict) -> float | None:
                 return None
     return None
 
-    
+
 def _get_method_rows(rows: list[dict], method: str) -> list[dict]:
     return [
         r for r in rows
@@ -141,18 +140,65 @@ def _get_success_iterations(rows: list[dict], method: str) -> list[int]:
     return sorted(success_iters)
 
 
-def _cluster_roots(root_values: list[float], cluster_tol: float) -> list[list[float]]:
-    xs = [x for x in sorted(root_values) if math.isfinite(x)]
+def _merge_tol(a: float, b: float, abs_tol: float, rel_tol: float) -> float:
+    scale = max(1.0, abs(a), abs(b))
+    return max(abs_tol, rel_tol * scale)
+
+
+def _is_close_root(a: float, b: float, abs_tol: float, rel_tol: float) -> bool:
+    return abs(a - b) <= _merge_tol(a, b, abs_tol=abs_tol, rel_tol=rel_tol)
+
+
+def _cluster_center(cluster: list[float]) -> float:
+    xs = sorted(x for x in cluster if math.isfinite(x))
+    if not xs:
+        return 0.0
+
+    n = len(xs)
+    mid = n // 2
+    if n % 2 == 1:
+        return xs[mid]
+    return 0.5 * (xs[mid - 1] + xs[mid])
+
+
+def _cluster_label(cluster: list[float]) -> str:
+    center = _cluster_center(cluster)
+    return f"{center:.10g}"
+
+
+def _cluster_roots(
+    root_values: list[float],
+    cluster_tol: float,
+    rel_tol: float | None = None,
+) -> list[list[float]]:
+    """
+    Cluster numerically close roots using tolerance-aware 1D merging.
+
+    Rules:
+    - discard non-finite values
+    - sort roots
+    - greedily merge into the current cluster if the new value is close
+      to the current cluster's representative
+    - representative = median(cluster), not mean(cluster)
+
+    Notes:
+    - cluster_tol is treated as absolute tolerance
+    - rel_tol defaults to max(cluster_tol, 1e-12) if not provided
+    """
+    xs = sorted(x for x in root_values if math.isfinite(x))
     if not xs:
         return []
+
+    abs_tol = max(float(cluster_tol), 0.0)
+    rel_tol = max(float(rel_tol if rel_tol is not None else cluster_tol), 1e-12)
 
     clusters: list[list[float]] = [[xs[0]]]
 
     for x in xs[1:]:
         current_cluster = clusters[-1]
-        cluster_center = sum(current_cluster) / len(current_cluster)
+        center = _cluster_center(current_cluster)
 
-        if abs(x - cluster_center) <= cluster_tol:
+        if _is_close_root(x, center, abs_tol=abs_tol, rel_tol=rel_tol):
             current_cluster.append(x)
         else:
             clusters.append([x])
@@ -160,20 +206,15 @@ def _cluster_roots(root_values: list[float], cluster_tol: float) -> list[list[fl
     return clusters
 
 
-def _cluster_center(cluster: list[float]) -> float:
-    return sum(cluster) / len(cluster)
-
-
-def _cluster_label(cluster: list[float]) -> str:
-    center = _cluster_center(cluster)
-    return f"{center:.6f}"
-
-
-def _build_root_label_map(root_values: list[float], cluster_tol: float) -> dict[float, str]:
+def _build_root_label_map(
+    root_values: list[float],
+    cluster_tol: float,
+    rel_tol: float | None = None,
+) -> dict[float, str]:
     """
     Build a mapping from each raw root value to its clustered root label.
     """
-    clusters = _cluster_roots(root_values, cluster_tol=cluster_tol)
+    clusters = _cluster_roots(root_values, cluster_tol=cluster_tol, rel_tol=rel_tol)
     label_map: dict[float, str] = {}
 
     for cluster in clusters:
@@ -184,14 +225,22 @@ def _build_root_label_map(root_values: list[float], cluster_tol: float) -> dict[
     return label_map
 
 
-def _canonicalize_root_values(root_values: list[float], cluster_tol: float) -> tuple[list[list[float]], dict[float, str]]:
+def _canonicalize_root_values(
+    root_values: list[float],
+    cluster_tol: float,
+    rel_tol: float | None = None,
+) -> tuple[list[list[float]], dict[float, str]]:
     """
-    Return both clusters and raw-root -> cluster-label mapping.
+    Return:
+    - clustered root groups
+    - raw-root -> cluster-label mapping
+
+    This is the authoritative root canonicalization used by the analytics layer.
     """
     xs = [x for x in root_values if math.isfinite(x)]
-    clusters = _cluster_roots(xs, cluster_tol=cluster_tol)
-    label_map: dict[float, str] = {}
+    clusters = _cluster_roots(xs, cluster_tol=cluster_tol, rel_tol=rel_tol)
 
+    label_map: dict[float, str] = {}
     for cluster in clusters:
         label = _cluster_label(cluster)
         for x in cluster:
@@ -223,6 +272,7 @@ def compute_basin_entropy(rows: list[dict], method: str, cluster_tol: float) -> 
             "cluster_tol": cluster_tol,
             "basin_counts": {},
             "basin_probabilities": {},
+            "cluster_centers": [],
         }
 
     basin_counts = {
@@ -243,6 +293,8 @@ def compute_basin_entropy(rows: list[dict], method: str, cluster_tol: float) -> 
     )
     entropy = max(0.0, entropy)
 
+    cluster_centers = [_cluster_center(cluster) for cluster in clusters]
+
     return {
         "method": method,
         "entropy": round(entropy, 8),
@@ -251,6 +303,7 @@ def compute_basin_entropy(rows: list[dict], method: str, cluster_tol: float) -> 
         "cluster_tol": cluster_tol,
         "basin_counts": basin_counts,
         "basin_probabilities": basin_probabilities,
+        "cluster_centers": cluster_centers,
     }
 
 
@@ -276,6 +329,23 @@ def compute_root_basin_statistics(
         for cluster in clusters
     }
 
+    cluster_metadata = []
+    for cluster in clusters:
+        xs = sorted(cluster)
+        label = _cluster_label(cluster)
+        center = _cluster_center(cluster)
+        span = (max(xs) - min(xs)) if xs else 0.0
+
+        cluster_metadata.append({
+            "label": label,
+            "center": center,
+            "member_count": len(xs),
+            "min_root": min(xs) if xs else None,
+            "max_root": max(xs) if xs else None,
+            "span": span,
+            "members": xs,
+        })
+
     total_runs = len(method_rows)
     total_converged = len(converged_rows)
     failure_count = total_runs - total_converged
@@ -295,12 +365,18 @@ def compute_root_basin_statistics(
         dominant_share = basin_probabilities[dominant_root]
 
     per_root_rows = []
-    for root_label in sorted(basin_counts.keys(), key=lambda x: float(x)):
+    for item in sorted(cluster_metadata, key=lambda x: x["center"]):
+        root_label = item["label"]
         per_root_rows.append({
             "method": method,
             "root": root_label,
+            "cluster_center": item["center"],
+            "cluster_span": item["span"],
             "basin_count": basin_counts[root_label],
             "basin_share": basin_probabilities.get(root_label, 0.0),
+            "member_count": item["member_count"],
+            "min_root": item["min_root"],
+            "max_root": item["max_root"],
             "total_converged": total_converged,
             "failure_count": failure_count,
             "failure_share": failure_share,
@@ -318,6 +394,7 @@ def compute_root_basin_statistics(
         "dominant_share": round(dominant_share, 8) if dominant_root is not None else 0.0,
         "basin_counts": basin_counts,
         "basin_probabilities": basin_probabilities,
+        "cluster_metadata": cluster_metadata,
         "per_root_rows": per_root_rows,
     }
 
@@ -390,7 +467,10 @@ def save_root_basin_statistics_plot(
     if not basin_counts:
         return None
 
-    labels = sorted(basin_counts.keys(), key=lambda x: float(x))
+    labels = sorted(
+        basin_counts.keys(),
+        key=lambda x: _safe_float(x, default=float("inf")),
+    )
     counts = [basin_counts[label] for label in labels]
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -440,7 +520,10 @@ def plot_root_basin_distribution(rows, method, outdir, cluster_tol=1e-6):
         for cluster in clusters
     }
 
-    labels = sorted(basin_counts.keys(), key=lambda x: float(x))
+    labels = sorted(
+        basin_counts.keys(),
+        key=lambda x: _safe_float(x, default=float("inf")),
+    )
     counts = [basin_counts[label] for label in labels]
 
     plt.figure(figsize=(6, 4))
