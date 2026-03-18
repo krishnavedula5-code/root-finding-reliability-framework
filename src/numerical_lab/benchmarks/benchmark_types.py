@@ -13,6 +13,9 @@ class BenchmarkProblem:
     name: str
     category: str
 
+    expr: str
+    dexpr: Optional[str]
+
     function: ScalarFunction
     derivative: Optional[ScalarFunction]
 

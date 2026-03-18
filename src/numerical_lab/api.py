@@ -135,6 +135,9 @@ class MonteCarloRequest(BaseModel):
 
 class SweepExperimentRequest(BaseModel):
     problem_mode: str = "benchmark"
+
+    # Accept both names; normalize later.
+    problem_id: Optional[str] = None
     benchmark_id: Optional[str] = None
 
     expr: Optional[str] = None
@@ -232,10 +235,17 @@ class SweepExperimentRequest(BaseModel):
                 raise ValueError("gaussian_std must be > 0 for gaussian mode")
 
         if mode == "benchmark":
-            if not self.benchmark_id or str(self.benchmark_id).strip() == "":
-                self.benchmark_id = "poly_01"
+            resolved_id = None
+
+            if self.problem_id is not None and str(self.problem_id).strip() != "":
+                resolved_id = str(self.problem_id).strip()
+            elif self.benchmark_id is not None and str(self.benchmark_id).strip() != "":
+                resolved_id = str(self.benchmark_id).strip()
             else:
-                self.benchmark_id = str(self.benchmark_id).strip()
+                resolved_id = "poly_01"
+
+            self.problem_id = resolved_id
+            self.benchmark_id = resolved_id
             return self
 
         if not self.expr or str(self.expr).strip() == "":
@@ -255,8 +265,7 @@ class SweepExperimentRequest(BaseModel):
                 raise ValueError("x_min must be < x_max")
 
         return self
-
-
+    
 # ---------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------
@@ -402,16 +411,23 @@ def whoami():
 # ---------------------------------------------------------
 
 @app.get("/benchmarks")
-def get_benchmarks():
+def list_benchmarks():
+    benchmarks = list_all()
+
     return [
         {
-            "id": p.problem_id,
-            "name": p.name,
-            "category": p.category,
-            "domain": list(p.domain),
-            "description": p.description,
+            "id": b.problem_id,
+            "name": b.name,
+            "category": b.category,
+            "expr": b.expr,
+            "dexpr": b.dexpr,
+            "domain": list(b.domain) if b.domain else [-4, 4],
+            "known_roots": b.known_roots or [],
+            "roots": b.known_roots or [],
+            "notes": b.description or "",
+            "analytic_notes": b.analytic_notes or "",
         }
-        for p in list_all()
+        for b in benchmarks
     ]
 
 
@@ -426,6 +442,8 @@ def benchmark_by_id(bench_id: str):
         "id": p.problem_id,
         "name": p.name,
         "category": p.category,
+        "expr": p.expr,
+        "dexpr": p.dexpr,
         "domain": list(p.domain),
         "known_roots": p.known_roots,
         "description": p.description,
@@ -572,6 +590,16 @@ def get_artifact_file(path: str):
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     return FileResponse(path=p)
+
+# api.py or routes/benchmarks.py
+
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/benchmarks")
+def list_benchmarks():
+    return list(BENCHMARKS.values())
 
 
 # ---------------------------------------------------------

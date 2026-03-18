@@ -18,6 +18,8 @@ register(
         problem_id="path_01",
         name="Newton pathology: x^3 - 2x + 2",
         category="pathological",
+        expr="x**3 - 2*x + 2",
+        dexpr="3*x**2 - 2",
         function=_path_01_f,
         derivative=_path_01_df,
         domain=(-3.0, 3.0),
@@ -44,6 +46,8 @@ register(
         problem_id="path_02",
         name="Flat derivative near root: x^3",
         category="pathological",
+        expr="x**3",
+        dexpr="3*x**2",
         function=_path_02_f,
         derivative=_path_02_df,
         domain=(-2.0, 2.0),
@@ -55,6 +59,7 @@ register(
         ),
     )
 )
+
 
 def _path_03_f(x: float) -> float:
     return x**3 - 5.0 * x
@@ -69,6 +74,8 @@ register(
         problem_id="path_03",
         name="Critical-point cubic: x^3 - 5x",
         category="pathological",
+        expr="x**3 - 5*x",
+        dexpr="3*x**2 - 5",
         function=_path_03_f,
         derivative=_path_03_df,
         domain=(-3.0, 3.0),
@@ -96,6 +103,8 @@ register(
         problem_id="path_04",
         name="Saturated nonlinearity: x - tanh(5x)",
         category="pathological",
+        expr="x - tanh(5*x)",
+        dexpr="1 - 5*(1 - tanh(5*x)**2)",
         function=_path_04_f,
         derivative=_path_04_df,
         domain=(-2.0, 2.0),

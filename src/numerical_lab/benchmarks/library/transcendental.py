@@ -19,6 +19,8 @@ register(
         problem_id="trans_01",
         name="Exponential fixed-point equation: exp(-x) - x",
         category="transcendental",
+        expr="exp(-x) - x",
+        dexpr="-exp(-x) - 1",
         function=_trans_01_f,
         derivative=_trans_01_df,
         domain=(-2.0, 2.0),
@@ -46,6 +48,8 @@ register(
         problem_id="trans_02",
         name="Cosine fixed-point equation: cos(x) - x",
         category="transcendental",
+        expr="cos(x) - x",
+        dexpr="-sin(x) - 1",
         function=_trans_02_f,
         derivative=_trans_02_df,
         domain=(-2.0, 2.0),
@@ -58,6 +62,7 @@ register(
         ),
     )
 )
+
 
 def _trans_03_f(x: float) -> float:
     return math.log(x + 2.0) - 0.5 * x
@@ -72,6 +77,8 @@ register(
         problem_id="trans_03",
         name="Log-linear: log(x+2) - x/2",
         category="transcendental",
+        expr="log(x+2) - x/2",
+        dexpr="1/(x+2) - 1/2",
         function=_trans_03_f,
         derivative=_trans_03_df,
         domain=(-1.9, 4.0),
@@ -98,6 +105,8 @@ register(
         problem_id="trans_04",
         name="Exponential-linear: exp(x) - 3x",
         category="transcendental",
+        expr="exp(x) - 3*x",
+        dexpr="exp(x) - 3",
         function=_trans_04_f,
         derivative=_trans_04_df,
         domain=(-1.0, 2.0),

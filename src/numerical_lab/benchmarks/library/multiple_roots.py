@@ -17,6 +17,8 @@ register(
         problem_id="multi_01",
         name="Double root: (x-1)^2",
         category="multiple_roots",
+        expr="(x - 1)**2",
+        dexpr="2*(x - 1)",
         function=_multi_01_f,
         derivative=_multi_01_df,
         domain=(-2.0, 4.0),
@@ -45,6 +47,8 @@ register(
         problem_id="multi_02",
         name="Triple root: (x-2)^3",
         category="multiple_roots",
+        expr="(x - 2)**3",
+        dexpr="3*(x - 2)**2",
         function=_multi_02_f,
         derivative=_multi_02_df,
         domain=(-1.0, 5.0),
@@ -57,6 +61,7 @@ register(
         ),
     )
 )
+
 
 def _multi_03_f(x: float) -> float:
     return (x + 1.0) ** 2 * (x - 2.0)
@@ -71,6 +76,8 @@ register(
         problem_id="multi_03",
         name="Mixed multiplicity: (x+1)^2 (x-2)",
         category="multiple_roots",
+        expr="(x + 1)**2 * (x - 2)",
+        dexpr="2*(x + 1)*(x - 2) + (x + 1)**2",
         function=_multi_03_f,
         derivative=_multi_03_df,
         domain=(-3.0, 3.0),
@@ -97,6 +104,8 @@ register(
         problem_id="multi_04",
         name="Fourth-order root: (x-1)^4",
         category="multiple_roots",
+        expr="(x - 1)**4",
+        dexpr="4*(x - 1)**3",
         function=_multi_04_f,
         derivative=_multi_04_df,
         domain=(-1.0, 3.0),

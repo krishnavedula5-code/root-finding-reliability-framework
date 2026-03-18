@@ -19,6 +19,8 @@ register(
         problem_id="osc_01",
         name="Sine: sin(x)",
         category="oscillatory",
+        expr="sin(x)",
+        dexpr="cos(x)",
         function=_osc_01_f,
         derivative=_osc_01_df,
         domain=(-2.0 * math.pi, 2.0 * math.pi),
@@ -31,6 +33,7 @@ register(
         ),
     )
 )
+
 
 def _osc_02_f(x: float) -> float:
     return math.sin(5.0 * x)
@@ -45,6 +48,8 @@ register(
         problem_id="osc_02",
         name="High-frequency sine: sin(5x)",
         category="oscillatory",
+        expr="sin(5*x)",
+        dexpr="5*cos(5*x)",
         function=_osc_02_f,
         derivative=_osc_02_df,
         domain=(-2.0, 2.0),
@@ -79,6 +84,8 @@ register(
         problem_id="osc_03",
         name="Amplitude-modulated oscillation: x cos(x)",
         category="oscillatory",
+        expr="x*cos(x)",
+        dexpr="cos(x) - x*sin(x)",
         function=_osc_03_f,
         derivative=_osc_03_df,
         domain=(-8.0, 8.0),

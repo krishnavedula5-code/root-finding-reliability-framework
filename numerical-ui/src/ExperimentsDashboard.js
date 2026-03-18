@@ -3,6 +3,7 @@ import { API } from "./api";
 import useBackendWarmup from "./useBackendWarmup";
 import BackendWarmupPanel from "./BackendWarmupPanel";
 
+
 const METHOD_OPTIONS = [
   "newton",
   "secant",
@@ -16,24 +17,44 @@ const BOUNDARY_METHOD_OPTIONS = ["newton"];
 
 const BENCHMARK_DETAILS = {
   p1: {
+    id: "p1",
+    name: "Cubic with challenging Newton behavior",
+    category: "polynomial",
     expr: "x**3 - 2*x + 2",
     dexpr: "3*x**2 - 2",
-    note: "Cubic benchmark with challenging Newton behavior.",
+    domain: [-4, 4],
+    roots: [],
+    notes: "Cubic benchmark with challenging Newton behavior.",
   },
   p2: {
+    id: "p2",
+    name: "Classic nonlinear cubic",
+    category: "polynomial",
     expr: "x**3 - x - 2",
     dexpr: "3*x**2 - 1",
-    note: "Classic nonlinear cubic with a real root.",
+    domain: [-4, 4],
+    roots: [],
+    notes: "Classic nonlinear cubic with a real root.",
   },
   p3: {
+    id: "p3",
+    name: "Fixed-point style cosine benchmark",
+    category: "transcendental",
     expr: "cos(x) - x",
     dexpr: "-sin(x) - 1",
-    note: "Fixed-point style benchmark with a unique real root.",
+    domain: [-4, 4],
+    roots: [],
+    notes: "Fixed-point style benchmark with a unique real root.",
   },
   p4: {
+    id: "p4",
+    name: "Multiple-root cubic benchmark",
+    category: "multiple_root",
     expr: "(x - 1)**2 * (x + 2)",
     dexpr: "2*(x - 1)*(x + 2) + (x - 1)**2",
-    note: "Multiple-root benchmark useful for basin and stability analysis.",
+    domain: [-4, 4],
+    roots: [-2, 1],
+    notes: "Multiple-root benchmark useful for basin and stability analysis.",
   },
 };
 
@@ -856,6 +877,7 @@ export default function ExperimentsDashboard() {
 
   const [problemMode, setProblemMode] = useState("benchmark");
   const [problemId, setProblemId] = useState("p4");
+  const [benchmarks, setBenchmarks] = useState([]);
 
   const [expr, setExpr] = useState("((x-1)**2)*(x+2)");
   const [dexpr, setDexpr] = useState("2*(x-1)*(x+2) + (x-1)**2");
@@ -933,6 +955,7 @@ export default function ExperimentsDashboard() {
   const [showMcArtifacts, setShowMcArtifacts] = useState(true);
 
   const pollRef = useRef(null);
+  const problemIdRef = useRef(problemId);
 
   const {
     backendStatus,
@@ -942,11 +965,103 @@ export default function ExperimentsDashboard() {
     runWithWarmup,
   } = useBackendWarmup({ autoPoll: true, pollIntervalMs: 25000 });
 
-  const benchmarkInfo = BENCHMARK_DETAILS[problemId] || null;
+  const benchmarkInfo =
+    benchmarks.find((b) => String(b.id) === String(problemId)) ||
+    BENCHMARK_DETAILS[problemId] ||
+    null;
 
   useEffect(() => {
     return () => stopPolling();
   }, []);
+
+  useEffect(() => {
+  problemIdRef.current = problemId;
+}, [problemId]);
+
+  useEffect(() => {
+    fetch(`${API}/benchmarks`)
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Failed to fetch benchmarks: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        const normalized = Array.isArray(data)
+          ? data
+          : Object.entries(data || {}).map(([id, info]) => ({
+              id,
+              ...(info || {}),
+            }));
+
+        setBenchmarks(normalized);
+
+        if (normalized.length > 0) {
+          const exists = normalized.some(
+            (b) => String(b.id) === String(problemIdRef.current)
+          );
+          if (!exists) {
+            const firstId = String(normalized[0].id);
+            problemIdRef.current = firstId;
+            setProblemId(firstId);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load benchmarks", err);
+
+        const fallback = Object.entries(BENCHMARK_DETAILS).map(([id, info]) => ({
+          id,
+          name: info.name || id,
+          category: info.category || "benchmark",
+          expr: info.expr,
+          dexpr: info.dexpr,
+          domain: info.domain || [-4, 4],
+          roots: info.roots || [],
+          known_roots: info.roots || [],
+          notes: info.notes || info.note || "",
+        }));
+
+        setBenchmarks(fallback);
+
+        const exists = fallback.some(
+          (b) => String(b.id) === String(problemIdRef.current)
+        );
+        if (!exists && fallback.length > 0) {
+          const firstId = String(fallback[0].id);
+          problemIdRef.current = firstId;
+          setProblemId(firstId);
+        }
+      });
+  }, []);
+
+  useEffect(() => {
+    if (problemMode !== "benchmark" || !benchmarkInfo) return;
+
+    if (benchmarkInfo.expr) {
+      setExpr(benchmarkInfo.expr);
+    }
+
+    if (benchmarkInfo.dexpr) {
+      setDexpr(benchmarkInfo.dexpr);
+    }
+
+    if (Array.isArray(benchmarkInfo.domain) && benchmarkInfo.domain.length >= 2) {
+      const d0 = Number(benchmarkInfo.domain[0]);
+      const d1 = Number(benchmarkInfo.domain[1]);
+
+      setScalarMin(d0);
+      setScalarMax(d1);
+      setBracketMin(d0);
+      setBracketMax(d1);
+
+      setMcConfig((prev) => ({
+        ...prev,
+        a: d0,
+        b: d1,
+      }));
+    }
+  }, [problemMode, problemId, benchmarkInfo]);
 
   useEffect(() => {
     if (!BOUNDARY_METHOD_OPTIONS.includes(boundaryMethod)) {
@@ -1143,64 +1258,44 @@ export default function ExperimentsDashboard() {
   }
 
   function buildSweepPayload() {
-    const sMin = Number(scalarMin);
-    const sMax = Number(scalarMax);
-    const bMin = Number(bracketMin);
-    const bMax = Number(bracketMax);
+  console.log("buildSweepPayload problemId state =", problemId);
+  console.log("buildSweepPayload problemId ref =", problemIdRef.current);
 
-    const base = {
-      methods: selectedMethods,
-      sampling_mode: samplingMode,
-      tol: Number(tol),
-      max_iter: Number(maxIter),
-      boundary_method: boundaryMethod,
-      numerical_derivative: numericalDerivative,
-      scalar_range: {
-        x_min: sMin,
-        x_max: sMax,
-      },
-      bracket_search_range: {
-        x_min: bMin,
-        x_max: bMax,
-      },
-    };
+  const sMin = Number(scalarMin);
+  const sMax = Number(scalarMax);
+  const bMin = Number(bracketMin);
+  const bMax = Number(bracketMax);
 
-    if (problemMode === "custom") {
-      const payload = {
-        ...base,
-        problem_mode: "custom",
-        problem_id: null,
-        expr: String(expr || "").trim(),
-        dexpr: String(dexpr || "").trim(),
-      };
-
-      if (samplingMode === "grid") {
-        payload.n_points = Number(nPoints);
-        payload.x_min = sMin;
-        payload.x_max = sMax;
-      } else {
-        payload.n_samples = Number(nSamples);
-        payload.random_seed = Number(randomSeed);
-      }
-
-      if (samplingMode === "gaussian") {
-        payload.gaussian_mean = Number(gaussianMean);
-        payload.gaussian_std = Number(gaussianStd);
-      }
-
-      return payload;
-    }
-
-    const payload = {
-      ...base,
-      problem_mode: "benchmark",
-      problem_id: problemId,
+  const base = {
+    methods: selectedMethods,
+    sampling_mode: samplingMode,
+    tol: Number(tol),
+    max_iter: Number(maxIter),
+    boundary_method: boundaryMethod,
+    numerical_derivative: numericalDerivative,
+    scalar_range: {
       x_min: sMin,
       x_max: sMax,
+    },
+    bracket_search_range: {
+      x_min: bMin,
+      x_max: bMax,
+    },
+  };
+
+  if (problemMode === "custom") {
+    const payload = {
+      ...base,
+      problem_mode: "custom",
+      problem_id: null,
+      expr: String(expr || "").trim(),
+      dexpr: String(dexpr || "").trim(),
     };
 
     if (samplingMode === "grid") {
       payload.n_points = Number(nPoints);
+      payload.x_min = sMin;
+      payload.x_max = sMax;
     } else {
       payload.n_samples = Number(nSamples);
       payload.random_seed = Number(randomSeed);
@@ -1214,44 +1309,66 @@ export default function ExperimentsDashboard() {
     return payload;
   }
 
-  function buildMonteCarloPayload() {
-    const payload = {
-      problem_mode: problemMode,
-      problem_id: problemMode === "benchmark" ? problemId : null,
-      methods: selectedMethods,
-      gaussian_mean: Number(gaussianMean),
-      gaussian_std: Number(gaussianStd),
-      distribution: mcConfig.distributionType,
-      n_samples: Number(mcConfig.nSamples),
-      random_seed: Number(mcConfig.randomSeed),
-      tol: Number(mcConfig.tol),
-      max_iter: Number(mcConfig.maxIter),
-      derivative_mode: mcConfig.derivativeMode,
-      cluster_tol: Number(mcConfig.clusterTol),
-    };
+  const payload = {
+    ...base,
+    problem_mode: "benchmark",
+    problem_id: problemIdRef.current,
+    x_min: sMin,
+    x_max: sMax,
+  };
 
-    if (problemMode === "custom") {
-      payload.expr = String(expr || "").trim();
-      payload.dexpr = String(dexpr || "").trim();
-    }
-
-    if (mcConfig.distributionType === "uniform") {
-      payload.x_min = Number(mcConfig.a);
-      payload.x_max = Number(mcConfig.b);
-    }
-
-    if (mcConfig.distributionType === "gaussian") {
-      payload.mean = Number(mcConfig.mean);
-      payload.std = Number(mcConfig.std);
-
-      // Some backends still also want x_min/x_max even for gaussian support.
-      // Sending them is harmless if your backend ignores extras.
-      payload.x_min = Number(scalarMin);
-      payload.x_max = Number(scalarMax);
-    }
-
-    return payload;
+  if (samplingMode === "grid") {
+    payload.n_points = Number(nPoints);
+  } else {
+    payload.n_samples = Number(nSamples);
+    payload.random_seed = Number(randomSeed);
   }
+
+  if (samplingMode === "gaussian") {
+    payload.gaussian_mean = Number(gaussianMean);
+    payload.gaussian_std = Number(gaussianStd);
+  }
+
+  console.log("SWEEP PAYLOAD =", payload);
+  return payload;
+}
+
+function buildMonteCarloPayload() {
+  const payload = {
+    problem_mode: problemMode,
+    problem_id: problemMode === "benchmark" ? problemIdRef.current : null,
+    methods: selectedMethods,
+    gaussian_mean: Number(gaussianMean),
+    gaussian_std: Number(gaussianStd),
+    distribution: mcConfig.distributionType,
+    n_samples: Number(mcConfig.nSamples),
+    random_seed: Number(mcConfig.randomSeed),
+    tol: Number(mcConfig.tol),
+    max_iter: Number(mcConfig.maxIter),
+    derivative_mode: mcConfig.derivativeMode,
+    cluster_tol: Number(mcConfig.clusterTol),
+  };
+
+  if (problemMode === "custom") {
+    payload.expr = String(expr || "").trim();
+    payload.dexpr = String(dexpr || "").trim();
+  }
+
+  if (mcConfig.distributionType === "uniform") {
+    payload.x_min = Number(mcConfig.a);
+    payload.x_max = Number(mcConfig.b);
+  }
+
+  if (mcConfig.distributionType === "gaussian") {
+    payload.mean = Number(mcConfig.mean);
+    payload.std = Number(mcConfig.std);
+    payload.x_min = Number(scalarMin);
+    payload.x_max = Number(scalarMax);
+  }
+
+  console.log("MONTE CARLO PAYLOAD =", payload);
+  return payload;
+}
 
   async function runExperiment() {
     try {
@@ -1270,6 +1387,11 @@ export default function ExperimentsDashboard() {
       } else {
         validateSweepInputs();
       }
+      
+      console.log("experimentType =", experimentType);
+      console.log("problemMode =", problemMode);
+      console.log("problemId state before submit =", problemId);
+      console.log("problemId ref before submit =", problemIdRef.current);
 
       const payload =
         experimentType === "monte_carlo"
@@ -1406,7 +1528,7 @@ export default function ExperimentsDashboard() {
 
   const paretoMeanUrl = toOutputUrl(analytics?.pareto?.mean_vs_failure);
   const paretoMedianUrl = toOutputUrl(analytics?.pareto?.median_vs_failure);
-
+  
   const rootCoverageData = analytics?.root_coverage_data || null;
   const rootCoveragePlot = analytics?.root_coverage_plot || null;
 
@@ -1804,15 +1926,51 @@ function normalizeMonteCarloRows(data) {
               <label style={styles.label}>Problem</label>
               <select
                 value={problemId}
-                onChange={(e) => setProblemId(e.target.value)}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  problemIdRef.current = nextId;
+                  setProblemId(nextId);
+
+                  const selected =
+                    benchmarks.find((b) => String(b.id) === String(nextId)) ||
+                    BENCHMARK_DETAILS[nextId];
+
+                  if (selected) {
+                    if (selected.expr) setExpr(selected.expr);
+                    if (selected.dexpr) setDexpr(selected.dexpr);
+
+                    const domain = selected.domain;
+                    if (Array.isArray(domain) && domain.length >= 2) {
+                      const d0 = Number(domain[0]);
+                      const d1 = Number(domain[1]);
+
+                      setScalarMin(d0);
+                      setScalarMax(d1);
+                      setBracketMin(d0);
+                      setBracketMax(d1);
+
+                      setMcConfig((prev) => ({
+                        ...prev,
+                        a: d0,
+                        b: d1,
+                      }));
+                    }
+                  }
+                }}
                 disabled={running || isPreparingRun}
                 style={styles.input}
               >
-                {Object.entries(BENCHMARK_DETAILS).map(([key, info]) => (
-                  <option key={key} value={key}>
-                    {key} - {info.expr}
-                  </option>
-                ))}
+                {benchmarks.length > 0
+                  ? benchmarks.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.id} - {b.name || b.expr}
+                      </option>
+                    ))
+                  : Object.entries(BENCHMARK_DETAILS).map(([key, info]) => (
+                      <option key={key} value={key}>
+                        {key} - {info.name || info.expr}
+                      </option>
+                    ))}
               </select>
             </div>
           ) : (
@@ -2222,23 +2380,57 @@ function normalizeMonteCarloRows(data) {
         {problemMode === "benchmark" && benchmarkInfo ? (
           <div style={styles.inlineInfoBox}>
             <div style={styles.inlineInfoTitle}>Benchmark Definition</div>
+
+            <div style={styles.inlineInfoText}>
+              <b>ID</b> = {benchmarkInfo.id || problemId}
+            </div>
+
+            <div style={styles.inlineInfoText}>
+              <b>Name</b> = {benchmarkInfo.name || "-"}
+            </div>
+
+            <div style={styles.inlineInfoText}>
+              <b>Category</b> = {benchmarkInfo.category || "-"}
+            </div>
+
             <div style={styles.inlineInfoText}>
               <b>f(x)</b> = {benchmarkInfo.expr}
             </div>
+
             <div style={styles.inlineInfoText}>
               <b>f&apos;(x)</b> ={" "}
               {experimentType === "sweep"
                 ? numericalDerivative
                   ? "(numerical derivative)"
-                  : benchmarkInfo.dexpr
+                  : benchmarkInfo.dexpr || "-"
                 : mcConfig.derivativeMode === "numerical"
                 ? "(numerical derivative)"
-                : benchmarkInfo.dexpr}
+                : benchmarkInfo.dexpr || "-"}
             </div>
-            <div style={styles.inlineInfoNote}>{benchmarkInfo.note}</div>
+
+            <div style={styles.inlineInfoText}>
+              <b>Domain</b> ={" "}
+              {Array.isArray(benchmarkInfo.domain) && benchmarkInfo.domain.length >= 2
+                ? `[${benchmarkInfo.domain[0]}, ${benchmarkInfo.domain[1]}]`
+                : "-"}
+            </div>
+
+            <div style={styles.inlineInfoText}>
+              <b>Known Roots</b> ={" "}
+              {Array.isArray(benchmarkInfo.known_roots) && benchmarkInfo.known_roots.length > 0
+                ? benchmarkInfo.known_roots.join(", ")
+                : Array.isArray(benchmarkInfo.roots) && benchmarkInfo.roots.length > 0
+                ? benchmarkInfo.roots.join(", ")
+                : "Not provided"}
+            </div>
+
+            {(benchmarkInfo.notes || benchmarkInfo.note) ? (
+              <div style={styles.inlineInfoNote}>
+                {benchmarkInfo.notes || benchmarkInfo.note}
+              </div>
+            ) : null}
           </div>
         ) : null}
-
         <BackendWarmupPanel
           backendStatus={backendStatus}
           statusMessage={statusMessage}
