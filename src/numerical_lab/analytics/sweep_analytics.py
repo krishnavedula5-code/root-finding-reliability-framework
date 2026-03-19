@@ -1139,6 +1139,7 @@ def generate_sweep_analytics(
     methods: list[str],
     outdir: str | Path,
     cluster_tol: float,
+    problem: dict | None = None,
 ) -> dict:
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -1242,7 +1243,56 @@ def generate_sweep_analytics(
     root_coverage_path = outdir / "root_coverage_summary.json"
     root_coverage_plot_path = outdir / "root_coverage_comparison.png"
 
-    root_coverage_data = compute_root_coverage(rows, tol=cluster_tol)
+    problem_domain = None
+    problem_known_roots = None
+
+    if problem is not None:
+        # Support dict-style problem objects
+        if isinstance(problem, dict):
+            raw_domain = problem.get("domain", problem.get("scalar_range"))
+            if isinstance(raw_domain, (list, tuple)) and len(raw_domain) == 2:
+                problem_domain = [float(raw_domain[0]), float(raw_domain[1])]
+
+            raw_known_roots = problem.get("known_roots")
+            if isinstance(raw_known_roots, (list, tuple)):
+                cleaned_known_roots = []
+                for r in raw_known_roots:
+                    try:
+                        cleaned_known_roots.append(float(r))
+                    except (TypeError, ValueError):
+                        pass
+                problem_known_roots = cleaned_known_roots
+
+        # Support SweepProblem dataclass / object-style problems
+        else:
+            raw_domain = getattr(problem, "domain", None)
+            if raw_domain is None:
+                raw_domain = getattr(problem, "scalar_range", None)
+
+            if isinstance(raw_domain, (list, tuple)) and len(raw_domain) == 2:
+                problem_domain = [float(raw_domain[0]), float(raw_domain[1])]
+
+            raw_known_roots = getattr(problem, "known_roots", None)
+            if isinstance(raw_known_roots, (list, tuple)):
+                cleaned_known_roots = []
+                for r in raw_known_roots:
+                    try:
+                        cleaned_known_roots.append(float(r))
+                    except (TypeError, ValueError):
+                        pass
+                problem_known_roots = cleaned_known_roots
+
+    print("[debug] generate_sweep_analytics received problem:", problem)
+    print("[debug] problem_domain prepared:", problem_domain)
+    print("[debug] problem_known_roots prepared:", problem_known_roots)
+
+    
+    root_coverage_data = compute_root_coverage(
+        rows,
+        tol=cluster_tol,
+        domain=problem_domain,
+        known_roots=problem_known_roots,
+    )
     save_root_coverage_summary(root_coverage_path, root_coverage_data)
     plot_root_coverage(root_coverage_data, root_coverage_plot_path)
 

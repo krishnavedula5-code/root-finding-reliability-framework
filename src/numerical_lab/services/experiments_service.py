@@ -534,12 +534,13 @@ def run_sweep_job(job_id: str, payload: Dict[str, Any]) -> None:
         except Exception as e:
             print(f"[warn] problem expectation generation failed: {e}")
             problem_expectations = {}
-
+        print(problem)
         analytics = generate_sweep_analytics(
             rows=[asdict(r) for r in records],
             methods=methods_to_use,
             outdir=analytics_dir,
             cluster_tol=cluster_tol,
+            problem=problem,
         )
         print("[debug] analytics keys:", list(analytics.keys()) if isinstance(analytics, dict) else type(analytics))
         if isinstance(analytics, dict):

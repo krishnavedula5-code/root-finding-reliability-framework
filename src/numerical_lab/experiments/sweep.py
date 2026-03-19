@@ -1181,12 +1181,14 @@ def run_single_sweep_experiment(
 
     methods_present = sorted({r.method for r in records if r.method})
     analytics_dir = sweep_path / problem.problem_id
-
+    print(problem)
     analytics_manifest = {
         problem.problem_id: generate_sweep_analytics(
             rows=[asdict(r) for r in records],
             methods=methods_present,
             outdir=analytics_dir,
+            cluster_tol=0.1,
+            problem=problem,
         )
     }
 
@@ -1275,11 +1277,13 @@ def run_all_default_sweeps(
 
         methods_present = sorted({r.method for r in records if r.method})
         analytics_dir = sweep_path / problem.problem_id
-
+        print(problem)
         analytics_manifest[problem.problem_id] = generate_sweep_analytics(
             rows=[asdict(r) for r in records],
             methods=methods_present,
             outdir=analytics_dir,
+            cluster_tol=0.1,
+            problem=problem,
         )
 
     summary = summarize_records(all_records, max_iter=max_iter)
