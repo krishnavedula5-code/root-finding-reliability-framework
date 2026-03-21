@@ -1,7 +1,8 @@
 cff-version: 1.2.0
-title: Numerical Solver Reliability Framework
-message: If you use this software, please cite it.
+title: "GRASP: Solver Reliability Analysis & Validation Framework"
+message: "If you use this software, please cite it as below."
 authors:
-  - family-names: Vedula
-    given-names: Krishna
+  - family-names: "Vedula"
+    given-names: "Krishna"
 date-released: 2026
+version: "0.1.0"
