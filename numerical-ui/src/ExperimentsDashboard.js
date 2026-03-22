@@ -2591,6 +2591,17 @@ const detectedRoots = [...new Set(
 
       {result ? (
         <div style={styles.resultsWrap}>
+                    <div
+            style={{
+              padding: "10px 12px",
+              marginBottom: "16px",
+              borderRadius: "8px",
+              background: "#f3f4f6",
+              fontWeight: 600,
+            }}
+          >
+            GRASP analyzes solver reliability globally and validates consistency between expected and observed behavior.
+          </div>
           {isMonteCarloResult ? (
             <>
               <SectionCard
@@ -2961,7 +2972,8 @@ const detectedRoots = [...new Set(
 
                           {group.items.length > 0 ? (
                             <div style={{ display: "grid", gap: "10px" }}>
-                              {group.items.map((issue, idx) => (
+                              {group.items.filter((issue) => issue.severity !== "pass")
+                                  .map((issue, idx) => (
                                 <div
                                   key={`${group.label}-${issue.code || "issue"}-${idx}`}
                                   style={{
@@ -2995,7 +3007,9 @@ const detectedRoots = [...new Set(
                               ))}
                             </div>
                           ) : (
-                            <p style={styles.paragraph}>No issues in this group.</p>
+                            <p style={styles.paragraph}>
+                              No warnings or inconsistencies detected.
+                            </p>
                           )}
                         </div>
                       ))}
