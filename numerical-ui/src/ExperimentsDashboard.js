@@ -900,6 +900,7 @@ export default function ExperimentsDashboard() {
   const [jobStatus, setJobStatus] = useState(null);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
+  const [showValidationSummary, setShowValidationSummary] = useState(true);
   const [error, setError] = useState(null);
   const [numericalDerivative, setNumericalDerivative] = useState(false);
   const [experimentType, setExperimentType] = useState("sweep");
@@ -972,7 +973,7 @@ export default function ExperimentsDashboard() {
   const [showInitVsIter, setShowInitVsIter] = useState(true);
 
   const [showFailureRegions, setShowFailureRegions] = useState(false);
-
+  const [validation, setValidation] = useState(null);
   const [showRootCoverage, setShowRootCoverage] = useState(true);
   const [showRootBasinStats, setShowRootBasinStats] = useState(false);
   const [showSolverComparison, setShowSolverComparison] = useState(true);
@@ -1492,6 +1493,15 @@ export default function ExperimentsDashboard() {
 
         if (data.status === "completed") {
           setResult(data.result || data);
+
+          const validationPayload =
+            (data.result && data.result.validation) || data.validation || null;
+
+          console.log("FULL JOB DATA:", data);
+          console.log("VALIDATION PAYLOAD:", validationPayload);
+
+          setValidation(validationPayload);
+
           setRunning(false);
           stopPolling();
           return;
@@ -1909,6 +1919,14 @@ const detectedRoots = [...new Set(
             Number(b.success_probability || 0) - Number(a.success_probability || 0)
         )[0]
       : null;
+
+  const getStatusColor = (status) => {
+  if (!status) return "#999";
+  if (status.toLowerCase() === "pass") return "green";
+  if (status.toLowerCase() === "warning") return "orange";
+  if (status.toLowerCase() === "suspicious") return "red";
+  return "#999";
+};
 
   return (
     <div style={styles.page}>
@@ -2834,6 +2852,157 @@ const detectedRoots = [...new Set(
                   </div>
                 )}
               </SectionCard>
+
+            {validation && (
+              <SectionCard
+                title="Validation Summary"
+                isOpen={showValidationSummary}
+                onToggle={() => setShowValidationSummary((v) => !v)}
+                description="Self-validation checks for consistency between problem expectations, solver outputs, and interpretation."
+              >
+                  <div style={styles.blockSpacer}>
+                    <div style={styles.innerPanel}>
+                      <div style={styles.innerPanelTitle}>Overall Status</div>
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          color: getStatusColor(
+                            validation.overall_status || validation.status
+                          ),
+                          fontSize: "16px",
+                        }}
+                      >
+                        {(validation.overview?.status || "unknown").toUpperCase()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {validation.methods && Object.keys(validation.methods).length > 0 ? (
+                    <div style={styles.blockSpacer}>
+                      <div style={styles.innerPanel}>
+                        <div style={styles.innerPanelTitle}>Per-Method Validation</div>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={styles.table}>
+                            <thead>
+                              <tr>
+                                <th style={styles.th}>Method</th>
+                                <th style={styles.th}>Success Rate</th>
+                                <th style={styles.th}>Status</th>
+                              </tr>
+                            </thead>
+<tbody>
+  {(validation.methods || []).map((method) => {
+    const probabilityIssue = (validation.solver_checks?.issues || []).find(
+      (issue) =>
+        issue.code === "success_probability_consistent" &&
+        issue.method === method
+    );
+
+    const countIssue = (validation.solver_checks?.issues || []).find(
+      (issue) =>
+        issue.code === "success_failure_consistent" &&
+        issue.method === method
+    );
+
+    const successRate =
+      probabilityIssue && probabilityIssue.observed != null
+        ? `${(Number(probabilityIssue.observed) * 100).toFixed(2)}%`
+        : "-";
+
+    const status =
+      probabilityIssue?.severity ||
+      countIssue?.severity ||
+      "unknown";
+
+    return (
+      <tr key={method}>
+        <td style={styles.td}>{prettyMethod(method)}</td>
+        <td style={styles.td}>{successRate}</td>
+        <td
+          style={{
+            ...styles.td,
+            fontWeight: 700,
+            color: getStatusColor(status),
+          }}
+        >
+          {status.toUpperCase()}
+        </td>
+      </tr>
+    );
+  })}
+</tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  <div style={styles.blockSpacer}>
+                    <div style={styles.innerPanel}>
+                      <div style={styles.innerPanelTitle}>Validation Issues</div>
+
+                      {[
+                        {
+                          label: "Problem Checks",
+                          items: validation.problem_checks?.issues || [],
+                        },
+                        {
+                          label: "Solver Checks",
+                          items: validation.solver_checks?.issues || [],
+                        },
+                        {
+                          label: "Consistency Checks",
+                          items: validation.consistency_checks?.issues || [],
+                        },
+                      ].map((group) => (
+                        <div key={group.label} style={{ marginBottom: "16px" }}>
+                          <div style={{ fontWeight: 700, marginBottom: "8px" }}>
+                            {group.label}
+                          </div>
+
+                          {group.items.length > 0 ? (
+                            <div style={{ display: "grid", gap: "10px" }}>
+                              {group.items.map((issue, idx) => (
+                                <div
+                                  key={`${group.label}-${issue.code || "issue"}-${idx}`}
+                                  style={{
+                                    padding: "10px 12px",
+                                    borderRadius: "8px",
+                                    background: "#f9fafb",
+                                    border: "1px solid #e5e7eb",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      fontWeight: 700,
+                                      color: getStatusColor(issue?.severity),
+                                      marginBottom: "4px",
+                                    }}
+                                  >
+                                    [{(issue?.severity || "info").toUpperCase()}]
+                                    {issue?.method ? ` ${prettyMethod(issue.method)}` : ""}
+                                    {issue?.code ? ` — ${issue.code}` : ""}
+                                  </div>
+                                  <div
+                                    style={{
+                                      color: "#374151",
+                                      fontSize: "13px",
+                                      lineHeight: 1.6,
+                                    }}
+                                  >
+                                    {issue?.message || "No message provided."}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p style={styles.paragraph}>No issues in this group.</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </SectionCard>
+              )}
 
               <SectionCard
                 title="Overview"

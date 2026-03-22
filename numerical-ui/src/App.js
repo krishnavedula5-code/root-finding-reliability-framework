@@ -39,8 +39,13 @@ function TopNav() {
           flexWrap: "wrap",
         }}
       >
-        <div style={{ fontSize: 18, fontWeight: 800, color: "#111827" }}>
-          Numerical Solver Lab
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#111827" }}>
+            GRASP
+          </div>
+          <div style={{ fontSize: 12, color: "#6b7280" }}>
+            Solver Reliability Analysis & Validation Framework
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
